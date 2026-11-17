@@ -169,10 +169,12 @@ function runAnalysis() {
   processedData = [];
   rawData.forEach(row => {
     let item = {};
-    FIELDS.forEach(f => {
+        FIELDS.forEach(f => {
       const col = document.getElementById(`map_${f.id}`).value;
-      item[f.id] = col ? parseFloat(String(row[col]).replace(',', '.')) : NaN;
+      if (f.id === 'Dir') item[f.id] = col ? String(row[col]).trim().toUpperCase() : 'L';
+      else item[f.id] = col ? parseFloat(String(row[col]).replace(',', '.')) : NaN;
     });
+
 
     if ([item.Rp, item.Rm, item.Th, item.CR, item.CT, item.T_recuit].some(isNaN)) return;
 
@@ -190,8 +192,15 @@ function runAnalysis() {
 
     processedData.push(item);
   });
+ allProcessedData = [...processedData];
+  applyDirectionFilter();
+}
 
-  if (processedData.length === 0) return alert("Aucune ligne numérique valide trouvée.");
+function applyDirectionFilter() {
+  const dir = document.getElementById('dirFilter').value;
+  processedData = dir === 'TOUS' ? allProcessedData : allProcessedData.filter(d => d.Dir === dir);
+
+  if (processedData.length === 0) return alert("Aucune ligne trouvée pour cette direction d'essai.");
 
   const total = processedData.length;
   const conf = processedData.filter(d => d.Statut === 'Conforme').length;
@@ -203,9 +212,9 @@ function runAnalysis() {
   document.getElementById('kpiDoux').innerText = ((doux / total) * 100).toFixed(1) + ' %';
   document.getElementById('kpiDur').innerText = ((dur / total) * 100).toFixed(1) + ' %';
 
-  document.getElementById('resultsSection').classList.remove('hidden');
   drawBarChart();
   setupRegimeControls();
+  document.getElementById('resultsSection').classList.remove('hidden');
 }
 
 function drawBarChart() {
