@@ -156,7 +156,7 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-let workbook = null, rawData = [], processedData = [];allProcessedData =[];
+let workbook = null, rawData = [], processedData = [],allProcessedData =[];
 
 const FIELDS = [
   { id: 'Rp', label: 'Limite élasticité Rp (MPa) *', req: true },
@@ -270,8 +270,6 @@ function applyDirectionFilter() {
   setupRegimeControls();
   populateCoilSelector();
   document.getElementById('resultsSection').classList.remove('hidden');
-}
-
   drawBarChart();
   setupRegimeControls();
 }
