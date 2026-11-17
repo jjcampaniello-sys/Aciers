@@ -103,7 +103,7 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-let workbook = null, rawData = [], processedData = [];
+let workbook = null, rawData = [], processedData = [];allProcessedData =[];
 
 const FIELDS = [
   { id: 'Rp', label: 'Limite élasticité Rp (MPa) *', req: true },
@@ -118,7 +118,7 @@ const FIELDS = [
   { id: 'Ti', label: 'Titane Ti (wt%)', req: false },
   { id: 'N', label: 'Azote N (wt%)', req: false },
   { id: 'C', label: 'Carbone C (wt%)', req: false },
-  { id: 'Mn', label: 'Manganèse Mn (wt%)', req: false }
+  { id: 'Mn', label: 'Manganèse Mn (wt%)', req: false },
     { id: 'Dir', label: 'Direction essai (BEPROEV_RICHTING)', req: false }
 ];
 
@@ -211,10 +211,9 @@ function applyDirectionFilter() {
   document.getElementById('kpiRejet').innerText = (((total - conf) / total) * 100).toFixed(1) + ' %';
   document.getElementById('kpiDoux').innerText = ((doux / total) * 100).toFixed(1) + ' %';
   document.getElementById('kpiDur').innerText = ((dur / total) * 100).toFixed(1) + ' %';
-
+document.getElementById('resultsSection').classList.remove('hidden');
   drawBarChart();
   setupRegimeControls();
-  document.getElementById('resultsSection').classList.remove('hidden');
 }
 
 function drawBarChart() {
