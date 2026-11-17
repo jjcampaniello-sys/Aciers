@@ -225,38 +225,62 @@ function setupRegimeControls() {
 function updateRegimeView() {
   const reg = document.getElementById('regimeFilter').value;
   const sub = reg === 'Tous' ? processedData : processedData.filter(d => d.Regime === reg);
-  document.getElementById('treeRules').innerText = buildDecisionRules(sub);
+  const features = ['CT', 'T_recuit', 'V_galva', 'V_rot', 'CR', 'Th', 'Nb_eff', 'C_eq'].filter(k => sub.some(d => !isNaN(d[k])));
+  document.getElementById('treeRules').innerText = buildDecisionTree(sub, features, 0, 3);
   updateScatter();
 }
 
-function buildDecisionRules(data) {
-  if (data.length < 15) return "Effectif insuffisant (< 15 bobines) pour extraire des seuils statistiques.";
-  const features = ['CT', 'T_recuit', 'V_galva', 'V_rot', 'CR', 'Th', 'Nb_eff', 'C_eq'].filter(k => data.some(d => !isNaN(d[k])));
-  let best = { gini: 1, feat: null, thresh: 0, left: [], right: [] };
+function formatLeaf(arr) {
+  const n = arr.length;
+  const ok = arr.filter(d => d.Statut === 'Conforme').length;
+  const doux = arr.filter(d => d.Statut === 'Rejet Doux (Rp<460)').length;
+  const dur = arr.filter(d => d.Statut === 'Rejet Dur (Rm>610)').length;
+  const pctOk = Math.round((ok / n) * 100);
+  if (pctOk >= 85) return `[FENÊTRE SÛRE] ${n} bobines → ${pctOk}% Conformes`;
+  const cause = dur >= doux ? `Rejet Dur (${Math.round((dur/n)*100)}%)` : `Rejet Doux (${Math.round((doux/n)*100)}%)`;
+  return `[ZONE À RISQUE] ${n} bobines → ${pctOk}% Conformes | Défaut dominant : ${cause}`;
+}
+
+function buildDecisionTree(data, features, depth, maxDepth) {
+  if (data.length < 20 || depth >= maxDepth) return formatLeaf(data);
+
   const gini = arr => {
     if (!arr.length) return 0;
-    const c = arr.filter(d => d.Statut === 'Conforme').length / arr.length;
-    return 1 - (c * c + (1 - c) * (1 - c));
+    const classes = ['Conforme', 'Rejet Doux (Rp<460)', 'Rejet Dur (Rm>610)', 'Double Rejet'];
+    let sumSq = 0;
+    classes.forEach(c => {
+      const p = arr.filter(d => d.Statut === c).length / arr.length;
+      sumSq += p * p;
+    });
+    return 1 - sumSq;
   };
+
+  const parentGini = gini(data);
+  if (parentGini < 0.08) return formatLeaf(data);
+
+  let best = { gain: 0, feat: null, thresh: 0, left: [], right: [] };
+
   features.forEach(f => {
-    const vals = [...new Set(data.map(d => d[f]).filter(v => !isNaN(v)))].sort((a, b) => a - b);
+    const vals = [...new Set(data.map(d => d[f]).filter(v => !isNaN(v)))].sort((a,b) => a - b);
     for (let i = 1; i < vals.length; i++) {
-      const th = (vals[i - 1] + vals[i]) / 2;
+      const th = (vals[i-1] + vals[i]) / 2;
       const left = data.filter(d => d[f] <= th);
       const right = data.filter(d => d[f] > th);
       if (left.length < 10 || right.length < 10) continue;
-      const score = (left.length * gini(left) + right.length * gini(right)) / data.length;
-      if (score < best.gini) best = { gini: score, feat: f, thresh: th, left, right };
+      const weightedGini = (left.length * gini(left) + right.length * gini(right)) / data.length;
+      const gain = parentGini - weightedGini;
+      if (gain > best.gain) best = { gain, feat: f, thresh: th, left, right };
     }
   });
-  if (!best.feat) return "Aucune coupure franche détectée sur ce sous-ensemble.";
-  const summary = arr => {
-    const ok = Math.round((arr.filter(d => d.Statut === 'Conforme').length / arr.length) * 100);
-    return `${arr.length} bobines → ${ok}% Conformes / ${100 - ok}% Rejets`;
-  };
-  return `Seuil critique principal détecté : ${best.feat} = ${best.thresh.toFixed(2)}\n` +
-    `├─ SI ${best.feat} <= ${best.thresh.toFixed(2)} : ${summary(best.left)}\n` +
-    `└─ SI ${best.feat} >  ${best.thresh.toFixed(2)} : ${summary(best.right)}`;
+
+  if (!best.feat || best.gain < 0.01) return formatLeaf(data);
+
+  const indent = "   ".repeat(depth);
+  const leftBranch = buildDecisionTree(best.left, features, depth + 1, maxDepth);
+  const rightBranch = buildDecisionTree(best.right, features, depth + 1, maxDepth);
+
+  return `\n${indent}├─ SI ${best.feat} <= ${best.thresh.toFixed(2)} (${best.left.length} bob.) : ${leftBranch}` +
+         `\n${indent}└─ SI ${best.feat} >  ${best.thresh.toFixed(2)} (${best.right.length} bob.) : ${rightBranch}`;
 }
 
 function updateScatter() {
