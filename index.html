@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Optimisation HSLA - Fenêtre Procédé</title>
   <link rel="manifest" href="manifest.json" />
-  <script src="https://cloudflare.com"></script>
-  <script src="https://plot.ly"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; margin: 20px; background: #f4f6f9; color: #1f2937; }
     .container { max-width: 1200px; margin: auto; }
@@ -23,7 +23,7 @@
 </head>
 <body>
 <div class="container">
-  <h1>Analyse Métallurgique & Fenêtres Procédés (HSLA)</h1>
+  <h1>Analyse Métallurgique &amp; Fenêtres Procédés (HSLA)</h1>
 
   <div class="card">
     <h3>1. Importer votre fichier industriel (.xlsm, .xlsx, .csv)</h3>
@@ -63,7 +63,7 @@
     </div>
 
     <div class="card">
-      <h3>4. Règles d'Exclusion & Fenêtre Opératoire 2D</h3>
+      <h3>4. Règles d'Exclusion &amp; Fenêtre Opératoire 2D</h3>
       <div class="grid">
         <div>
           <label>Régime Procédé :</label>
@@ -192,9 +192,9 @@ function runAnalysis() {
   document.getElementById('kpiDoux').innerText = ((doux / total) * 100).toFixed(1) + ' %';
   document.getElementById('kpiDur').innerText = ((dur / total) * 100).toFixed(1) + ' %';
 
+  document.getElementById('resultsSection').classList.remove('hidden');
   drawBarChart();
   setupRegimeControls();
-  document.getElementById('resultsSection').classList.remove('hidden');
 }
 
 function drawBarChart() {
@@ -226,53 +226,57 @@ function updateRegimeView() {
   const reg = document.getElementById('regimeFilter').value;
   const sub = reg === 'Tous' ? processedData : processedData.filter(d => d.Regime === reg);
   document.getElementById('treeRules').innerText = buildDecisionRules(sub);
-Use code with caution.
-updateScatter();
+  updateScatter();
 }
+
 function buildDecisionRules(data) {
-if (data.length < 15) return "Effectif insuffisant (< 15 bobines) pour extraire des seuils statistiques.";
-const features = ['CT', 'T_recuit', 'V_galva', 'V_rot', 'CR', 'Th', 'Nb_eff', 'C_eq'].filter(k => data.some(d => !isNaN(d[k])));
-let best = { gini: 1, feat: null, thresh: 0, left: [], right: [] };
-const gini = arr => {
-if (!arr.length) return 0;
-const c = arr.filter(d => d.Statut === 'Conforme').length / arr.length;
-return 1 - (cc + (1-c)(1-c));
-};
-features.forEach(f => {
-const vals = [...new Set(data.map(d => d[f]).filter(v => !isNaN(v)))].sort((a,b) => a - b);
-for (let i = 1; i < vals.length; i++) {
-const th = (vals[i-1] + vals[i]) / 2;
-const left = data.filter(d => d[f] <= th);
-const right = data.filter(d => d[f] > th);
-if (left.length < 10 || right.length < 10) continue;
-const score = (left.length * gini(left) + right.length * gini(right)) / data.length;
-if (score < best.gini) best = { gini: score, feat: f, thresh: th, left, right };
+  if (data.length < 15) return "Effectif insuffisant (< 15 bobines) pour extraire des seuils statistiques.";
+  const features = ['CT', 'T_recuit', 'V_galva', 'V_rot', 'CR', 'Th', 'Nb_eff', 'C_eq'].filter(k => data.some(d => !isNaN(d[k])));
+  let best = { gini: 1, feat: null, thresh: 0, left: [], right: [] };
+  const gini = arr => {
+    if (!arr.length) return 0;
+    const c = arr.filter(d => d.Statut === 'Conforme').length / arr.length;
+    return 1 - (c * c + (1 - c) * (1 - c));
+  };
+  features.forEach(f => {
+    const vals = [...new Set(data.map(d => d[f]).filter(v => !isNaN(v)))].sort((a, b) => a - b);
+    for (let i = 1; i < vals.length; i++) {
+      const th = (vals[i - 1] + vals[i]) / 2;
+      const left = data.filter(d => d[f] <= th);
+      const right = data.filter(d => d[f] > th);
+      if (left.length < 10 || right.length < 10) continue;
+      const score = (left.length * gini(left) + right.length * gini(right)) / data.length;
+      if (score < best.gini) best = { gini: score, feat: f, thresh: th, left, right };
+    }
+  });
+  if (!best.feat) return "Aucune coupure franche détectée sur ce sous-ensemble.";
+  const summary = arr => {
+    const ok = Math.round((arr.filter(d => d.Statut === 'Conforme').length / arr.length) * 100);
+    return `${arr.length} bobines → ${ok}% Conformes / ${100 - ok}% Rejets`;
+  };
+  return `Seuil critique principal détecté : ${best.feat} = ${best.thresh.toFixed(2)}\n` +
+    `├─ SI ${best.feat} <= ${best.thresh.toFixed(2)} : ${summary(best.left)}\n` +
+    `└─ SI ${best.feat} >  ${best.thresh.toFixed(2)} : ${summary(best.right)}`;
 }
-});
-if (!best.feat) return "Aucune coupure franche détectée sur ce sous-ensemble.";
-const summary = arr => {
-const ok = Math.round((arr.filter(d => d.Statut === 'Conforme').length / arr.length) * 100);
-return ${arr.length} bobines → ${ok}% Conformes / ${100 - ok}% Rejets;
-};
-return Seuil critique principal détecté : ${best.feat} = ${best.thresh.toFixed(2)}\n +
-├─ SI ${best.feat} <= ${best.thresh.toFixed(2)} : ${summary(best.left)}\n +
-└─ SI ${best.feat} >  ${best.thresh.toFixed(2)} : ${summary(best.right)};
-}
+
 function updateScatter() {
-const reg = document.getElementById('regimeFilter').value;
-const xCol = document.getElementById('xSelect').value;
-const yCol = document.getElementById('ySelect').value;
-const sub = reg === 'Tous' ? processedData : processedData.filter(d => d.Regime === reg);
-const statuts = ['Conforme', 'Rejet Doux (Rp<460)', 'Rejet Dur (Rm>610)', 'Double Rejet'];
-const colors = { 'Conforme': '#16a34a', 'Rejet Doux (Rp<460)': '#2563eb', 'Rejet Dur (Rm>610)': '#dc2626', 'Double Rejet': '#9333ea' };
-const traces = statuts.map(st => {
-const pts = sub.filter(d => d.Statut === st);
-return {
-x: pts.map(p => p[xCol]), y: pts.map(p => p[yCol]),
-text: pts.map(p => Rp: ${p.Rp} | Rm: ${p.Rm} | Th: ${p.Th}mm),
-mode: 'markers', type: 'scatter', name: st,
-marker: { size: 9, color: colors[st], opacity: 0.85 }
-};
-});
-Plotly.newPlot('scatterChart', traces, { xaxis: { title: xCol }, yaxis: { title: yCol }, height: 430, margin: { t: 20 } });
+  const reg = document.getElementById('regimeFilter').value;
+  const xCol = document.getElementById('xSelect').value;
+  const yCol = document.getElementById('ySelect').value;
+  const sub = reg === 'Tous' ? processedData : processedData.filter(d => d.Regime === reg);
+  const statuts = ['Conforme', 'Rejet Doux (Rp<460)', 'Rejet Dur (Rm>610)', 'Double Rejet'];
+  const colors = { 'Conforme': '#16a34a', 'Rejet Doux (Rp<460)': '#2563eb', 'Rejet Dur (Rm>610)': '#dc2626', 'Double Rejet': '#9333ea' };
+  const traces = statuts.map(st => {
+    const pts = sub.filter(d => d.Statut === st);
+    return {
+      x: pts.map(p => p[xCol]), y: pts.map(p => p[yCol]),
+      text: pts.map(p => `Rp: ${p.Rp} | Rm: ${p.Rm} | Th: ${p.Th}mm`),
+      mode: 'markers', type: 'scatter', name: st,
+      marker: { size: 9, color: colors[st], opacity: 0.85 }
+    };
+  });
+  Plotly.newPlot('scatterChart', traces, { xaxis: { title: xCol }, yaxis: { title: yCol }, height: 430, margin: { t: 20 } });
 }
+</script>
+</body>
+</html>
