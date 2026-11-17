@@ -240,3 +240,14 @@ function updateScatter() {
       text: pts.map(p => `Rp: ${p.Rp} MPa | Rm: ${p.Rm} MPa | Th: ${p.Th} mm`),
       mode: 'markers',
       type: 'scatter',
+name: st,
+marker: { size: 9, color: colors[st], opacity: 0.85 }
+};
+});
+Plotly.newPlot('scatterChart', traces, {
+xaxis: { title: xCol },
+yaxis: { title: yCol },
+height: 450,
+margin: { t: 20 }
+});
+}
