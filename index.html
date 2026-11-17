@@ -95,6 +95,13 @@
         <div class="card" style="border-left: 5px solid #16a34a;">
       <h3>5. Simulateur Dynamique : Consigne Recuit Optimale (Feed-Forward)</h3>
       <p style="font-size: 13.5px; color: #475569;">Calibré automatiquement sur les données filtrées ci-dessus. Saisissez les paramètres mesurés à l'entrée de la ligne galva :</p>
+               <div style="margin-bottom: 12px;">
+        <label><strong>Charger automatiquement depuis un Code Bobine du fichier :</strong></label>
+        <select id="sim_CoilSelect" onchange="fillSimulatorFromCoil()" style="max-width: 300px;">
+          <option value="">-- Saisie manuelle --</option>
+        </select>
+      </div>
+
           <div class="grid">
         <div>
           <label>Épaisseur finale Th (mm) * :</label>
@@ -165,7 +172,8 @@ const FIELDS = [
   { id: 'N', label: 'Azote N (wt%)', req: false },
   { id: 'C', label: 'Carbone C (wt%)', req: false },
   { id: 'Mn', label: 'Manganèse Mn (wt%)', req: false },
-    { id: 'Dir', label: 'Direction essai (BEPROEV_RICHTING)', req: false }
+    { id: 'Dir', label: 'Direction essai (BEPROEV_RICHTING)', req: false },
+    { id: 'CoilID', label: 'Code Bobine (ROL_IDENT)', req: false }
 ];
 
 document.getElementById('fileInput').addEventListener('change', function(e) {
@@ -215,14 +223,15 @@ function runAnalysis() {
   processedData = [];
   rawData.forEach(row => {
     let item = {};
-        FIELDS.forEach(f => {
+    FIELDS.forEach(f => {
       const col = document.getElementById(`map_${f.id}`).value;
       if (f.id === 'Dir') item[f.id] = col ? String(row[col]).trim().toUpperCase() : 'L';
+      else if (f.id === 'CoilID') item[f.id] = col ? String(row[col]).trim() : '';
       else item[f.id] = col ? parseFloat(String(row[col]).replace(',', '.')) : NaN;
     });
 
-
     if ([item.Rp, item.Rm, item.Th, item.CR, item.CT, item.T_recuit].some(isNaN)) return;
+
 
     if (item.Rp < 460 && item.Rm > 610) item.Statut = 'Double Rejet';
     else if (item.Rp < 460) item.Statut = 'Rejet Doux (Rp<460)';
@@ -485,6 +494,30 @@ function simulateOptimalTrecuit() {
     txt += `   Meilleur compromis à ${bestT}°C → Rp = ${bestRp.toFixed(1)} MPa | Rm = ${bestRm.toFixed(1)} MPa`;
   }
   out.innerText = txt;
+}
+function populateCoilSelector() {
+  const sel = document.getElementById('sim_CoilSelect');
+  if (!sel) return;
+  const uniqueCoils = [...new Set(processedData.map(d => d.CoilID).filter(Boolean))];
+  sel.innerHTML = '<option value="">-- Saisie manuelle --</option>' +
+    uniqueCoils.map(c => `<option value="${c}">${c}</option>`).join('');
+}
+
+function fillSimulatorFromCoil() {
+  const id = document.getElementById('sim_CoilSelect').value;
+  if (!id) return;
+  const row = processedData.find(d => d.CoilID === id);
+  if (!row) return;
+  if (!isNaN(row.Th)) document.getElementById('sim_Th').value = row.Th;
+  if (!isNaN(row.CR)) document.getElementById('sim_CR').value = row.CR;
+  if (!isNaN(row.CT)) document.getElementById('sim_CT').value = row.CT;
+  if (!isNaN(row.V_galva)) document.getElementById('sim_V').value = row.V_galva;
+  if (!isNaN(row.C)) document.getElementById('sim_C').value = row.C;
+  if (!isNaN(row.Mn)) document.getElementById('sim_Mn').value = row.Mn;
+  if (!isNaN(row.Nb)) document.getElementById('sim_Nb').value = row.Nb;
+  if (!isNaN(row.Ti)) document.getElementById('sim_Ti').value = row.Ti;
+  if (!isNaN(row.N)) document.getElementById('sim_N').value = row.N;
+  simulateOptimalTrecuit();
 }
 
 </script>
