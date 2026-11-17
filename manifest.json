@@ -1,8 +1,0 @@
-{
-  "name": "Optimisation Fenêtre Procédé HSLA",
-  "short_name": "HSLA-Opti",
-  "start_url": "./index.html",
-  "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#0e1117"
-}
