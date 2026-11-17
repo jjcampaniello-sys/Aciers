@@ -56,6 +56,16 @@
       <div class="kpi"><div>Rejets Durs (Rm &gt; 610)</div><h2 id="kpiDur">-</h2></div>
       <div class="kpi"><div>Bobines Valides</div><h2 id="kpiTotal">-</h2></div>
     </div>
+    
+    <div class="card">
+      <label><strong>Filtrer par Direction d'essai (BEPROEV_RICHTING) :</strong></label>
+      <select id="dirFilter" onchange="applyDirectionFilter()" style="max-width: 250px;">
+        <option value="L">L (Longitudinal — Référence)</option>
+        <option value="S">S (Transverse — 90°)</option>
+        <option value="D">D (Diagonal — 45°)</option>
+        <option value="TOUS">Toutes les directions</option>
+      </select>
+    </div>
 
     <div class="card">
       <h3>3. Répartition des Rejets par Régime Procédé</h3>
