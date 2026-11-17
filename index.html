@@ -460,21 +460,32 @@ function simulateOptimalTrecuit() {
     return;
   }
 
-  let bestT = null, bestMargin = -999, bestRp = 0, bestRm = 0;
-  let validTemps = [];
+    let bestT = null, bestV = v, bestMargin = -999, bestRp = 0, bestRm = 0;
+  let validPairs = [];
 
-  for (let t = 745; t <= 810; t += 1) {
-    const xVec = [1, ...features.map(f => f === 'T_recuit' ? t : simInputs[f])];
-    const predRp = xVec.reduce((acc, val, idx) => acc + val * betaRp[idx], 0);
-    const predRm = xVec.reduce((acc, val, idx) => acc + val * betaRm[idx], 0);
+  // Plage de vitesses testées : ±25 m/min autour de la vitesse actuelle (ou vitesse fixe si non renseignée)
+  const vList = (!isNaN(v) && features.includes('V_galva')) 
+    ? [v - 25, v - 15, v - 10, v - 5, v, v + 5, v + 10, v + 15, v + 25].filter(val => val >= 50 && val <= 200)
+    : [v];
 
-    const margin = Math.min(predRp - 460, 610 - predRm);
-    if (margin >= 0) validTemps.push(t);
-    if (margin > bestMargin) {
-      bestMargin = margin;
-      bestT = t;
-      bestRp = predRp;
-      bestRm = predRm;
+  for (let candV of vList) {
+    for (let t = 745; t <= 810; t += 1) {
+      const xVec = [1, ...features.map(f => f === 'T_recuit' ? t : (f === 'V_galva' ? candV : simInputs[f]))];
+      const predRp = xVec.reduce((acc, val, idx) => acc + val * betaRp[idx], 0);
+      const predRm = xVec.reduce((acc, val, idx) => acc + val * betaRm[idx], 0);
+
+      const margin = Math.min(predRp - 460, 610 - predRm);
+      if (margin >= 0) validPairs.push({ t, candV, margin });
+
+      // On privilégie la marge maximale, et à marge proche on reste proche de la vitesse initiale
+      const score = margin - (isNaN(v) ? 0 : Math.abs(candV - v) * 0.05);
+      if (score > bestMargin) {
+        bestMargin = score;
+        bestT = t;
+        bestV = candV;
+        bestRp = predRp;
+        bestRm = predRm;
+      }
     }
   }
 
@@ -485,16 +496,22 @@ function simulateOptimalTrecuit() {
   }
   txt += `------------------------------------------------------------------\n`;
 
-  if (validTemps.length > 0) {
-    txt += `✅ CONSIGNE OPTIMALE RECOMMANDÉE : T_recuit = ${bestT} °C\n`;
-    txt += `   Plage autorisée : [${Math.min(...validTemps)} °C  à  ${Math.max(...validTemps)} °C]\n`;
-    txt += `   Prédiction à ${bestT}°C → Rp = ${bestRp.toFixed(1)} MPa (min 460) | Rm = ${bestRm.toFixed(1)} MPa (max 610)\n`;
-    txt += `   Marge de sécurité minimale : +${bestMargin.toFixed(1)} MPa`;
+  if (validPairs.length > 0) {
+    const validTempsAtBestV = validPairs.filter(p => p.candV === bestV).map(p => p.t);
+    txt += `✅ RÉGLAGE OPTIMAL RECOMMANDÉ :\n`;
+    txt += `   • Température de recuit (T_recuit) : ${bestT} °C (plage autorisée : [${Math.min(...validTempsAtBestV)} – ${Math.max(...validTempsAtBestV)} °C])\n`;
+    if (!isNaN(bestV) && features.includes('V_galva')) {
+      const diffV = bestV - v;
+      const noteV = diffV === 0 ? "inchangée" : (diffV > 0 ? `+${diffV} m/min vs initiale` : `${diffV} m/min vs initiale`);
+      txt += `   • Vitesse ligne galva (V_galva)    : ${bestV} m/min (${noteV})\n`;
+    }
+    txt += `   • Prédiction mécanique → Rp = ${bestRp.toFixed(1)} MPa (min 460) | Rm = ${bestRm.toFixed(1)} MPa (max 610)`;
   } else {
-    txt += `⚠️ ALERTE BOBINE HORS FENÊTRE : Aucune température entre 745 et 810°C ne garantit Rp >= 460 et Rm <= 610.\n`;
-    txt += `   Meilleur compromis à ${bestT}°C → Rp = ${bestRp.toFixed(1)} MPa | Rm = ${bestRm.toFixed(1)} MPa`;
+    txt += `⚠️ ALERTE BOBINE HORS FENÊTRE : Aucun couple (T_recuit / Vitesse) ne garantit Rp >= 460 et Rm <= 610.\n`;
+    txt += `   Meilleur compromis : T_recuit = ${bestT} °C${!isNaN(bestV) ? ' à ' + bestV + ' m/min' : ''} → Rp = ${bestRp.toFixed(1)} MPa | Rm = ${bestRm.toFixed(1)} MPa`;
   }
   out.innerText = txt;
+
 }
 function populateCoilSelector() {
   const sel = document.getElementById('sim_CoilSelect');
