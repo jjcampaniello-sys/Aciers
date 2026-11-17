@@ -266,7 +266,12 @@ function applyDirectionFilter() {
   document.getElementById('kpiRejet').innerText = (((total - conf) / total) * 100).toFixed(1) + ' %';
   document.getElementById('kpiDoux').innerText = ((doux / total) * 100).toFixed(1) + ' %';
   document.getElementById('kpiDur').innerText = ((dur / total) * 100).toFixed(1) + ' %';
-document.getElementById('resultsSection').classList.remove('hidden');
+  drawBarChart();
+  setupRegimeControls();
+  populateCoilSelector();
+  document.getElementById('resultsSection').classList.remove('hidden');
+}
+
   drawBarChart();
   setupRegimeControls();
 }
