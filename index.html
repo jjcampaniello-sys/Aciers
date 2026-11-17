@@ -151,9 +151,7 @@
 <script>
 // Purge automatique d'un ancien Service Worker bloqué
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(regs => {
-    for (let reg of regs) reg.unregister();
-  });
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
 }
 
 let workbook = null, rawData = [], processedData = [],allProcessedData =[];
