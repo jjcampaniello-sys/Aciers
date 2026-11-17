@@ -3,24 +3,240 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Optimisation HSLA - PWA</title>
-  <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="https://jsdelivr.net" />
+  <title>Optimisation HSLA - Fenêtre Procédé</title>
+  <script src="https://jsdelivr.net"></script>
+  <script src="https://plot.ly"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f8f9fa; color: #222; }
+    .card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); margin-bottom: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+    select, input, button { width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; }
+    button { background: #0d6efd; color: white; font-weight: bold; border: none; cursor: pointer; margin-top: 15px; }
+    button:hover { background: #0b5ed7; }
+    .kpi { text-align: center; padding: 15px; background: #eef4ff; border-radius: 6px; }
+    .kpi h2 { margin: 5px 0; color: #0d6efd; }
+    .hidden { display: none; }
+  </style>
 </head>
 <body>
-  <div id="root"></div>
-  <script src="https://jsdelivr.net"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js');
+
+  <h1>Analyse Métallurgique & Fenêtres Procédés (HSLA)</h1>
+
+  <div class="card">
+    <h3>1. Charger votre fichier Excel (.xlsm, .xlsx) ou CSV</h3>
+    <input type="file" id="fileInput" accept=".xlsm,.xlsx,.xls,.csv" />
+    <div id="sheetControls" class="grid hidden" style="margin-top:15px;">
+      <div>
+        <label>Onglet du classeur :</label>
+        <select id="sheetSelect"></select>
+      </div>
+      <div>
+        <label>Ligne des en-têtes (1 = 1ère ligne) :</label>
+        <input type="number" id="headerRow" value="1" min="1" max="30" />
+      </div>
+      <div>
+        <button onclick="parseSheet()">Lire les colonnes</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="mappingCard" class="card hidden">
+    <h3>2. Associer vos colonnes Excel</h3>
+    <div class="grid" id="mappingGrid"></div>
+    <button onclick="runAnalysis()">Lancer l'analyse métallurgique</button>
+  </div>
+
+  <div id="resultsSection" class="hidden">
+    <div class="card grid">
+      <div class="kpi"><div>Taux de Rejet Global</div><h2 id="kpiRejet">-</h2><small>Cible : &lt; 5.0 %</small></div>
+      <div class="kpi"><div>Rejets Doux (Rp &lt; 460)</div><h2 id="kpiDoux">-</h2></div>
+      <div class="kpi"><div>Rejets Durs (Rm &gt; 610)</div><h2 id="kpiDur">-</h2></div>
+      <div class="kpi"><div>Bobines Analysées</div><h2 id="kpiTotal">-</h2></div>
+    </div>
+
+    <div class="card">
+      <h3>3. Répartition des Rejets par Régime Procédé</h3>
+      <div id="barChart"></div>
+    </div>
+
+    <div class="card">
+      <h3>4. Carte de Fenêtre Opératoire 2D</h3>
+      <div class="grid">
+        <div>
+          <label>Filtrer par Régime :</label>
+          <select id="regimeFilter" onchange="updateScatter()"></select>
+        </div>
+        <div>
+          <label>Paramètre Axe X :</label>
+          <select id="xSelect" onchange="updateScatter()"></select>
+        </div>
+        <div>
+          <label>Paramètre Axe Y :</label>
+          <select id="ySelect" onchange="updateScatter()"></select>
+        </div>
+      </div>
+      <div id="scatterChart" style="margin-top:15px;"></div>
+    </div>
+  </div>
+
+<script>
+let workbook = null;
+let rawData = [];
+let processedData = [];
+
+const FIELDS = [
+  { id: 'Rp', label: 'Limite élasticité Rp (MPa) *', req: true },
+  { id: 'Rm', label: 'Résistance traction Rm (MPa) *', req: true },
+  { id: 'Th', label: 'Épaisseur finale (mm) *', req: true },
+  { id: 'CR', label: 'Réduction à froid %CR *', req: true },
+  { id: 'CT', label: 'Temp. Bobinage CT (°C) *', req: true },
+  { id: 'T_recuit', label: 'Temp. Recuit Galva (°C) *', req: true },
+  { id: 'V_galva', label: 'Vitesse ref. Galva', req: false },
+  { id: 'V_rot', label: 'Vitesse ref. ROT', req: false },
+  { id: 'Nb', label: 'Niobium Nb (wt%)', req: false },
+  { id: 'Ti', label: 'Titane Ti (wt%)', req: false },
+  { id: 'N', label: 'Azote N (wt%)', req: false },
+  { id: 'C', label: 'Carbone C (wt%)', req: false },
+  { id: 'Mn', label: 'Manganèse Mn (wt%)', req: false }
+];
+
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    const data = new Uint8Array(evt.target.result);
+    workbook = XLSX.read(data, { type: 'array' });
+    const sel = document.getElementById('sheetSelect');
+    sel.innerHTML = workbook.SheetNames.map(s => `<option value="${s}">${s}</option>`).join('');
+    document.getElementById('sheetControls').classList.remove('hidden');
+    parseSheet();
+  };
+  reader.readAsArrayBuffer(file);
+});
+
+function parseSheet() {
+  const sheetName = document.getElementById('sheetSelect').value;
+  const headerIdx = parseInt(document.getElementById('headerRow').value, 10) - 1;
+  const sheet = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+  if (rows.length <= headerIdx) return alert("Ligne d'en-tête invalide.");
+
+  const headers = rows[headerIdx].map((h, i) => h ? String(h).trim() : `Col_${i+1}`);
+  rawData = rows.slice(headerIdx + 1).map(r => {
+    let obj = {};
+    headers.forEach((h, i) => obj[h] = r[i]);
+    return obj;
+  });
+
+  const grid = document.getElementById('mappingGrid');
+  grid.innerHTML = FIELDS.map(f => `
+    <div>
+      <label>${f.label}</label>
+      <select id="map_${f.id}">
+        <option value="">(Ignorer)</option>
+        ${headers.map(h => `<option value="${h}">${h}</option>`).join('')}
+      </select>
+    </div>
+  `).join('');
+  document.getElementById('mappingCard').classList.remove('hidden');
+}
+
+function runAnalysis() {
+  for (let f of FIELDS.filter(x => x.req)) {
+    if (!document.getElementById(`map_${f.id}`).value) {
+      return alert(`Veuillez associer la colonne obligatoire : ${f.label}`);
     }
-    stlite.mount({
-      requirements: ["pandas", "numpy", "scikit-learn", "plotly", "openpyxl"],
-      entrypoint: "app.py",
-      files: {
-        "app.py": { url: "./app.py" }
-      }
-    }, document.getElementById("root"));
-  </script>
-</body>
-</html>
+  }
+
+  processedData = [];
+  rawData.forEach(row => {
+    let item = {};
+    FIELDS.forEach(f => {
+      const col = document.getElementById(`map_${f.id}`).value;
+      item[f.id] = col ? parseFloat(String(row[col]).replace(',', '.')) : NaN;
+    });
+
+    if ([item.Rp, item.Rm, item.Th, item.CR, item.CT, item.T_recuit].some(isNaN)) return;
+
+    if (item.Rp < 460 && item.Rm > 610) item.Statut = 'Double Rejet';
+    else if (item.Rp < 460) item.Statut = 'Rejet Doux (Rp<460)';
+    else if (item.Rm > 610) item.Statut = 'Rejet Dur (Rm>610)';
+    else item.Statut = 'Conforme';
+
+    if (!isNaN(item.Nb) && !isNaN(item.N) && !isNaN(item.Ti)) {
+      item.Nb_eff = item.Nb - Math.max(0, 6.64 * (item.N - 0.292 * item.Ti));
+    }
+    if (!isNaN(item.C) && !isNaN(item.Mn)) {
+      item.C_eq = item.C + item.Mn / 6.0;
+    }
+
+    if (item.Th >= 1.4 || item.CR < 58) item.Regime = 'Régime A (Fortes ép. / Bas %CR)';
+    else if (item.Th <= 1.0 || item.CR > 63) item.Regime = 'Régime C (Fines ép. / Haut %CR)';
+    else item.Regime = 'Régime B (Transition)';
+
+    processedData.push(item);
+  });
+
+  if (processedData.length === 0) return alert("Aucune ligne valide trouvée. Vérifiez la ligne d'en-tête.");
+
+  const total = processedData.length;
+  const doux = processedData.filter(d => d.Statut === 'Rejet Doux (Rp<460)').length;
+  const dur = processedData.filter(d => d.Statut === 'Rejet Dur (Rm>610)').length;
+  const conf = processedData.filter(d => d.Statut === 'Conforme').length;
+
+  document.getElementById('kpiTotal').innerText = total;
+  document.getElementById('kpiRejet').innerText = (((total - conf) / total) * 100).toFixed(1) + ' %';
+  document.getElementById('kpiDoux').innerText = ((doux / total) * 100).toFixed(1) + ' %';
+  document.getElementById('kpiDur').innerText = ((dur / total) * 100).toFixed(1) + ' %';
+
+  drawBarChart();
+  setupScatterControls();
+  document.getElementById('resultsSection').classList.remove('hidden');
+}
+
+function drawBarChart() {
+  const regimes = [...new Set(processedData.map(d => d.Regime))].sort();
+  const statuts = ['Conforme', 'Rejet Doux (Rp<460)', 'Rejet Dur (Rm>610)', 'Double Rejet'];
+  const colors = { 'Conforme': '#2ca02c', 'Rejet Doux (Rp<460)': '#1f77b4', 'Rejet Dur (Rm>610)': '#d62728', 'Double Rejet': '#9467bd' };
+
+  const traces = statuts.map(st => ({
+    x: regimes,
+    y: regimes.map(r => processedData.filter(d => d.Regime === r && d.Statut === st).length),
+    name: st,
+    type: 'bar',
+    marker: { color: colors[st] }
+  }));
+
+  Plotly.newPlot('barChart', traces, { barmode: 'group', height: 350, margin: { t: 20 } });
+}
+
+function setupScatterControls() {
+  const regimes = ['Tous', ...new Set(processedData.map(d => d.Regime)).values()];
+  document.getElementById('regimeFilter').innerHTML = regimes.map(r => `<option value="${r}">${r}</option>`).join('');
+
+  const numCols = ['CT', 'T_recuit', 'V_galva', 'V_rot', 'CR', 'Th', 'Nb_eff', 'C_eq'].filter(k => processedData.some(d => !isNaN(d[k])));
+  const opts = numCols.map(c => `<option value="${c}">${c}</option>`).join('');
+  document.getElementById('xSelect').innerHTML = opts;
+  document.getElementById('ySelect').innerHTML = opts;
+  if (numCols.length > 1) document.getElementById('ySelect').selectedIndex = 1;
+  updateScatter();
+}
+
+function updateScatter() {
+  const reg = document.getElementById('regimeFilter').value;
+  const xCol = document.getElementById('xSelect').value;
+  const yCol = document.getElementById('ySelect').value;
+  const sub = reg === 'Tous' ? processedData : processedData.filter(d => d.Regime === reg);
+
+  const statuts = ['Conforme', 'Rejet Doux (Rp<460)', 'Rejet Dur (Rm>610)', 'Double Rejet'];
+  const colors = { 'Conforme': '#2ca02c', 'Rejet Doux (Rp<460)': '#1f77b4', 'Rejet Dur (Rm>610)': '#d62728', 'Double Rejet': '#9467bd' };
+
+  const traces = statuts.map(st => {
+    const pts = sub.filter(d => d.Statut === st);
+    return {
+      x: pts.map(p => p[xCol]),
+      y: pts.map(p => p[yCol]),
+      text: pts.map(p => `Rp: ${p.Rp} MPa | Rm: ${p.Rm} MPa | Th: ${p.Th} mm`),
+      mode: 'markers',
+      type: 'scatter',
