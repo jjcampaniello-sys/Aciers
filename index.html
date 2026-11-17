@@ -92,6 +92,31 @@
       <div id="treeRules" class="rules-box"></div>
       <div id="scatterChart" style="margin-top:15px;"></div>
     </div>
+        <div class="card" style="border-left: 5px solid #16a34a;">
+      <h3>5. Simulateur Dynamique : Consigne Recuit Optimale (Feed-Forward)</h3>
+      <p style="font-size: 13.5px; color: #475569;">Calibré automatiquement sur les données filtrées ci-dessus. Saisissez les paramètres mesurés à l'entrée de la ligne galva :</p>
+      <div class="grid">
+        <div>
+          <label>Épaisseur finale Th (mm) :</label>
+          <input type="number" id="sim_Th" step="0.01" value="1.55" />
+        </div>
+        <div>
+          <label>Réduction à froid %CR :</label>
+          <input type="number" id="sim_CR" step="0.1" value="56.5" />
+        </div>
+        <div>
+          <label>Temp. Bobinage réel CT (°C) :</label>
+          <input type="number" id="sim_CT" step="1" value="555" />
+        </div>
+        <div>
+          <label>Vitesse galva / refroid. (optionnel) :</label>
+          <input type="number" id="sim_V" step="1" value="100" />
+        </div>
+      </div>
+      <button onclick="simulateOptimalTrecuit()" style="background: #16a34a;">Calculer la consigne T_recuit optimale</button>
+      <div id="simOutput" class="rules-box" style="margin-top: 15px; display: none;"></div>
+    </div>
+
   </div>
 </div>
 
@@ -320,6 +345,113 @@ function updateScatter() {
   });
   Plotly.newPlot('scatterChart', traces, { xaxis: { title: xCol }, yaxis: { title: yCol }, height: 430, margin: { t: 20 } });
 }
+ // Régression linéaire multiple par moindres carrés (Gauss-Jordan)
+function fitOLS(data, xCols, yCol) {
+  const n = data.length;
+  const p = xCols.length + 1;
+  if (n <= p + 2) return null;
+
+  let XtX = Array.from({ length: p }, () => Array(p).fill(0));
+  let XtY = Array(p).fill(0);
+
+  data.forEach(row => {
+    const x = [1, ...xCols.map(c => row[c])];
+    const y = row[yCol];
+    for (let i = 0; i < p; i++) {
+      XtY[i] += x[i] * y;
+      for (let j = 0; j < p; j++) XtX[i][j] += x[i] * x[j];
+    }
+  });
+
+  // Régularisation légère (Ridge) pour éviter toute colinéarité sur petit échantillon
+  for (let i = 1; i < p; i++) XtX[i][i] += 1e-4;
+
+  // Résolution linéaire
+  let aug = XtX.map((r, i) => [...r, XtY[i]]);
+  for (let i = 0; i < p; i++) {
+    let maxRow = i;
+    for (let k = i + 1; k < p; k++) if (Math.abs(aug[k][i]) > Math.abs(aug[maxRow][i])) maxRow = k;
+    [aug[i], aug[maxRow]] = [aug[maxRow], aug[i]];
+    if (Math.abs(aug[i][i]) < 1e-10) return null;
+    for (let k = i + 1; k < p; k++) {
+      const f = aug[k][i] / aug[i][i];
+      for (let j = i; j <= p; j++) aug[k][j] -= f * aug[i][j];
+    }
+  }
+  let beta = Array(p).fill(0);
+  for (let i = p - 1; i >= 0; i--) {
+    beta[i] = aug[i][p];
+    for (let j = i + 1; j < p; j++) beta[i] -= aug[i][j] * beta[j];
+    beta[i] /= aug[i][i];
+  }
+  return beta;
+}
+
+function simulateOptimalTrecuit() {
+  const out = document.getElementById('simOutput');
+  out.style.display = 'block';
+
+  const th = parseFloat(document.getElementById('sim_Th').value);
+  const cr = parseFloat(document.getElementById('sim_CR').value);
+  const ct = parseFloat(document.getElementById('sim_CT').value);
+  const v = parseFloat(document.getElementById('sim_V').value);
+
+  // Sélection du régime correspondant à la bobine entrante
+  let targetRegime = 'Régime B (Transition)';
+  if (th >= 1.4 || cr < 58) targetRegime = 'Régime A (Fortes ép. / Bas %CR)';
+  else if (th <= 1.0 || cr > 63) targetRegime = 'Régime C (Fines ép. / Haut %CR)';
+
+  let trainSet = processedData.filter(d => d.Regime === targetRegime);
+  if (trainSet.length < 10) trainSet = processedData; // Repli sur tout l'échantillon si régime trop petit
+
+  const useV = trainSet.every(d => !isNaN(d.V_galva)) && !isNaN(v);
+  const features = useV ? ['Th', 'CR', 'CT', 'T_recuit', 'V_galva'] : ['Th', 'CR', 'CT', 'T_recuit'];
+
+  const betaRp = fitOLS(trainSet, features, 'Rp');
+  const betaRm = fitOLS(trainSet, features, 'Rm');
+
+  if (!betaRp || !betaRm) {
+    out.innerText = "Données insuffisantes pour calibrer les équations prédictives.";
+    return;
+  }
+
+  let bestT = null, bestMargin = -999, bestRp = 0, bestRm = 0;
+  let validTemps = [];
+
+  // Balayage de T_recuit entre 745°C et 810°C
+  for (let t = 745; t <= 810; t += 1) {
+    const xVec = useV ? [1, th, cr, ct, t, v] : [1, th, cr, ct, t];
+    const predRp = xVec.reduce((acc, val, idx) => acc + val * betaRp[idx], 0);
+    const predRm = xVec.reduce((acc, val, idx) => acc + val * betaRm[idx], 0);
+
+    // Marge de sécurité par rapport aux limites [Rp >= 460, Rm <= 610]
+    const margin = Math.min(predRp - 460, 610 - predRm);
+    if (margin >= 0) validTemps.push(t);
+    if (margin > bestMargin) {
+      bestMargin = margin;
+      bestT = t;
+      bestRp = predRp;
+      bestRm = predRm;
+    }
+  }
+
+  let txt = `Régime détecté : ${targetRegime} (calibré sur ${trainSet.length} essais)\n`;
+  txt += `Équation Rp : ${betaRp[0].toFixed(1)} + (${betaRp[1].toFixed(1)}×Th) + (${betaRp[2].toFixed(2)}×CR) + (${betaRp[3].toFixed(2)}×CT) + (${betaRp[4].toFixed(2)}×T_recuit)\n`;
+  txt += `Équation Rm : ${betaRm[0].toFixed(1)} + (${betaRm[1].toFixed(1)}×Th) + (${betaRm[2].toFixed(2)}×CR) + (${betaRm[3].toFixed(2)}×CT) + (${betaRm[4].toFixed(2)}×T_recuit)\n`;
+  txt += `------------------------------------------------------------------\n`;
+
+  if (validTemps.length > 0) {
+    txt += `✅ CONSIGNE OPTIMALE RECOMMANDÉE : T_recuit = ${bestT} °C\n`;
+    txt += `   Plage autorisée : [${Math.min(...validTemps)} °C  à  ${Math.max(...validTemps)} °C]\n`;
+    txt += `   Prédiction à ${bestT}°C → Rp = ${bestRp.toFixed(1)} MPa (min 460) | Rm = ${bestRm.toFixed(1)} MPa (max 610)\n`;
+    txt += `   Marge de sécurité minimale : +${bestMargin.toFixed(1)} MPa`;
+  } else {
+    txt += `⚠️ ALERTE BOBINE HORS FENÊTRE : Aucune température entre 745 et 810°C ne garantit Rp >= 460 et Rm <= 610.\n`;
+    txt += `   Meilleur compromis à ${bestT}°C → Rp = ${bestRp.toFixed(1)} MPa | Rm = ${bestRm.toFixed(1)} MPa`;
+  }
+  out.innerText = txt;
+}
+ 
 </script>
 </body>
 </html>
