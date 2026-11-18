@@ -544,7 +544,8 @@ function simulateOptimalTrecuit() {
     const pRp = 1 - normCdf((460 - predRp) / sRp);
     const pRm = normCdf((610 - predRm) / sRm);
     // Borne basse (Fréchet) : prudente, car Rp et Rm sont corrélés
-    grid.push({ t, v, predRp, predRm, pOk: Math.max(0, pRp + pRm - 1) });
+       grid.push({ t, v, predRp, predRm, pOk: pRp * pRm });
+
   }
 
   const maxP = Math.max(...grid.map(g => g.pOk));
@@ -577,10 +578,18 @@ function simulateOptimalTrecuit() {
   else txt += `⚠️ Aucune température de la plage n'atteint 95 % : bobine à risque.\n`;
   if (best.t === tMin || best.t === tMax || (vGrid.length > 1 && (best.v === vMin || best.v === vMax))) txt += `⚠️ Optimum en bord de plage observée : extrapolation, à valider côté procédé.\n`;
   if (qRp.r2 < 0.3 || qRm.r2 < 0.3) txt += `⚠️ Modèle peu explicatif (R² < 0.3) : consigne indicative seulement.\n`;
-    if (!isNaN(potHsm)) {
-    if (potHsm >= 0.45) txt += `⚠️ Potentiel HSM élevé (${potHsm.toFixed(2)}) : fort durcissement Nb attendu — plafonner T_recuit ≤ 763 °C pour éviter un Rejet Dur (Rm > 610).\n`;
-    else if (potHsm <= 0.32) txt += `⚠️ Potentiel HSM faible (${potHsm.toFixed(2)}) : précipitation avancée au bobinage — risque élevé de Rejet Doux (Rp < 460) même à basse T_recuit.\n`;
+     if (!isNaN(potHsm)) {
+    const isRegC = targetRegime.startsWith('Régime C');
+    const seuilHaut = isRegC ? 0.60 : 0.45;
+    const seuilBas  = isRegC ? 0.42 : 0.32;
+    const tPlafond  = isRegC ? 770 : 763;
+    if (potHsm >= seuilHaut) {
+      txt += `⚠️ Potentiel HSM élevé (${potHsm.toFixed(2)}) : fort durcissement Nb attendu — surveiller Rm > 610 si T_recuit < ${tPlafond} °C ou vitesse trop rapide.\n`;
+    } else if (potHsm <= seuilBas) {
+      txt += `⚠️ Potentiel HSM faible (${potHsm.toFixed(2)}) : précipitation avancée au bobinage — risque élevé de Rejet Doux (Rp < 460).\n`;
+    }
   }
+
   out.innerText = txt;
   renderSensitivityTable(best.t, best.v, vFixed, vGrid, tMin, tMax, simInputs, features, betaRp, betaRm, sRp, sRm);
 }
@@ -620,9 +629,10 @@ function renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, simInpu
       const rm = predictRow(betaRm, features, testObj);
       const pRp = 1 - normCdf((460 - rp) / sRp);
       const pRm = normCdf((610 - rm) / sRm);
-      const prob = Math.round(Math.max(0, pRp + pRm - 1) * 100);
+            const prob = Math.round((pRp * pRm) * 100);
       const isOk = rp >= 460 && rm <= 610;
-      const bg = !isOk ? '#fee2e2' : (prob >= 70 ? '#dcfce7' : '#fef9c3');
+      const bg = !isOk ? '#fee2e2' : (prob >= 55 ? '#dcfce7' : '#fef9c3');
+
       const isBestCell = (t === Math.round(bestT) && (v === undefined || v === null || isNaN(v) || Math.round(v) === Math.round(bestV)));
       const borderOpt = isBestCell ? '3px solid #16a34a' : '1px solid #cbd5e1';
       html += `<td style="padding: 6px; background: ${bg}; border: ${borderOpt};">
@@ -632,10 +642,11 @@ function renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, simInpu
     });
     html += `</tr>`;
   });
-  html += `</tbody></table>
+    html += `</tbody></table>
   <div style="font-size: 0.78em; color: #64748b; margin-top: 4px;">
-    🟢 Vert : Conforme (≥70%) &nbsp;|&nbsp; 🟡 Jaune : Conforme mais marge serrée (&lt;70%) &nbsp;|&nbsp; 🔴 Rouge : Hors cible (Rp &lt; 460 ou Rm &gt; 610) &nbsp;|&nbsp; Cadre vert épais : Consigne recommandée.
+    🟢 Vert : Conforme (≥55%) &nbsp;|&nbsp; 🟡 Jaune : Conforme mais marge serrée (&lt;55%) &nbsp;|&nbsp; 🔴 Rouge : Hors cible (Rp &lt; 460 ou Rm &gt; 610) &nbsp;|&nbsp; Cadre vert épais : Consigne recommandée.
   </div>`;
+
   container.innerHTML = html;
 }
 
