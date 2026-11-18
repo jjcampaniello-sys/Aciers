@@ -117,10 +117,10 @@
         <div><label>Azote N wt% (opt.) :</label><input type="number" id="sim_N" step="0.0001" placeholder="ex: 0.0040" /></div>
       </div>
 
-      <button onclick="simulateOptimalTrecuit()" style="background: #16a34a;">Calculer la consigne T_recuit optimale</button>
                   <button onclick="simulateOptimalTrecuit()" style="background: #16a34a;">Calculer la consigne T_recuit optimale</button>
-      <div id="simOutput" class="rules-box" style="margin-top: 15px; display: none;"></div>
+            <div id="simOutput" class="rules-box" style="margin-top: 15px; display: none;"></div>
       <div id="simSensitivityTable" style="margin-top: 14px; overflow-x: auto;"></div>
+
     </div>
 
   </div>
@@ -581,10 +581,10 @@ function simulateOptimalTrecuit() {
     if (potHsm >= 0.45) txt += `⚠️ Potentiel HSM élevé (${potHsm.toFixed(2)}) : fort durcissement Nb attendu — plafonner T_recuit ≤ 763 °C pour éviter un Rejet Dur (Rm > 610).\n`;
     else if (potHsm <= 0.32) txt += `⚠️ Potentiel HSM faible (${potHsm.toFixed(2)}) : précipitation avancée au bobinage — risque élevé de Rejet Doux (Rp < 460) même à basse T_recuit.\n`;
   }
-
-       out.innerText = txt;
-  renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, predictPoint, simInputs, feats, mu, sd, wRp, wRm, rmseRp, rmseRm);
+  out.innerText = txt;
+  renderSensitivityTable(best.t, best.v, vFixed, vGrid, tMin, tMax, simInputs, features, betaRp, betaRm, sRp, sRm);
 }
+
 
 function renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, simInputs, features, betaRp, betaRm, sRp, sRm) {
   const container = document.getElementById('simSensitivityTable');
