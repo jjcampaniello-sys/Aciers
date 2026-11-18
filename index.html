@@ -53,7 +53,7 @@
     <div class="card grid">
       <div class="kpi"><div>Taux de Rejet Global</div><h2 id="kpiRejet">-</h2><small>Objectif : &lt; 5.0 %</small></div>
       <div class="kpi"><div>Rejets Doux (Rp &lt; 460)</div><h2 id="kpiDoux">-</h2></div>
-      <div class="kpi"><div>Rejets Durs (Rm &gt; 610)</div><h2 id="kpiDur">-</h2></div>
+      <div class="kpi"><div>Rejets Durs (Rm &gt; 680)</div><h2 id="kpiDur">-</h2></div>
       <div class="kpi"><div>Doubles Rejets</div><h2 id="kpiDouble">-</h2></div>
       <div class="kpi"><div>Bobines analysées</div><h2 id="kpiTotal">-</h2></div>
     </div>
@@ -151,8 +151,8 @@ const FIELDS = [
   { id: 'CoilID', label: 'Code Bobine (ROL_IDENT)', req: false }
 ];
 
-const STATUTS = ['Conforme', 'Rejet Doux (Rp<460)', 'Rejet Dur (Rm>610)', 'Double Rejet'];
-const COLORS = { 'Conforme': '#16a34a', 'Rejet Doux (Rp<460)': '#2563eb', 'Rejet Dur (Rm>610)': '#dc2626', 'Double Rejet': '#9333ea' };
+const STATUTS = ['Conforme', 'Rejet Doux (Rp<460)', 'Rejet Dur (Rm>680)', 'Double Rejet'];
+const COLORS = { 'Conforme': '#16a34a', 'Rejet Doux (Rp<460)': '#2563eb', 'Rejet Dur (Rm>680)': '#dc2626', 'Double Rejet': '#9333ea' };
 
 function getRegime(th, cr) {
   if (th >= 1.4 || cr < 58) return 'Régime A (Fortes ép. / Bas %CR)';
@@ -232,9 +232,9 @@ function runAnalysis() {
 
     if ([item.Rp, item.Rm, item.Th, item.CR, item.CT, item.T_recuit].some(isNaN)) return;
 
-    if (item.Rp < 460 && item.Rm > 610) item.Statut = 'Double Rejet';
+    if (item.Rp < 460 && item.Rm > 680) item.Statut = 'Double Rejet';
     else if (item.Rp < 460) item.Statut = 'Rejet Doux (Rp<460)';
-    else if (item.Rm > 610) item.Statut = 'Rejet Dur (Rm>610)';
+    else if (item.Rm > 680) item.Statut = 'Rejet Dur (Rm>680)';
     else item.Statut = 'Conforme';
 
     if (!isNaN(item.Nb) && !isNaN(item.N) && !isNaN(item.Ti)) item.Nb_eff = item.Nb - Math.max(0, 6.64 * (item.N - 0.292 * item.Ti));
@@ -264,7 +264,7 @@ function applyDirectionFilter() {
   document.getElementById('kpiTotal').innerText = total;
   document.getElementById('kpiRejet').innerText = (((total - conf) / total) * 100).toFixed(1) + ' %';
   document.getElementById('kpiDoux').innerText = ((count('Rejet Doux (Rp<460)') / total) * 100).toFixed(1) + ' %';
-  document.getElementById('kpiDur').innerText = ((count('Rejet Dur (Rm>610)') / total) * 100).toFixed(1) + ' %';
+  document.getElementById('kpiDur').innerText = ((count('Rejet Dur (Rm>680)') / total) * 100).toFixed(1) + ' %';
   document.getElementById('kpiDouble').innerText = ((count('Double Rejet') / total) * 100).toFixed(1) + ' %';
 
   document.getElementById('resultsSection').classList.remove('hidden');
@@ -312,7 +312,7 @@ function formatLeaf(arr) {
   const n = arr.length;
   const ok = arr.filter(d => d.Statut === 'Conforme').length;
   const doux = arr.filter(d => d.Statut === 'Rejet Doux (Rp<460)').length;
-  const dur = arr.filter(d => d.Statut === 'Rejet Dur (Rm>610)').length;
+  const dur = arr.filter(d => d.Statut === 'Rejet Dur (Rm>680)').length;
   const pctOk = Math.round((ok / n) * 100);
   if (pctOk >= 85) return `[FENÊTRE SÛRE] ${n} bobines → ${pctOk}% Conformes`;
  const dbl = arr.filter(d => d.Statut === 'Double Rejet').length;
@@ -584,7 +584,7 @@ function simulateOptimalTrecuit() {
     const seuilBas  = isRegC ? 0.42 : 0.32;
     const tPlafond  = isRegC ? 770 : 763;
     if (potHsm >= seuilHaut) {
-      txt += `⚠️ Potentiel HSM élevé (${potHsm.toFixed(2)}) : fort durcissement Nb attendu — surveiller Rm > 610 si T_recuit < ${tPlafond} °C ou vitesse trop rapide.\n`;
+      txt += `⚠️ Potentiel HSM élevé (${potHsm.toFixed(2)}) : fort durcissement Nb attendu — surveiller Rm > 680 si T_recuit < ${tPlafond} °C ou vitesse trop rapide.\n`;
     } else if (potHsm <= seuilBas) {
       txt += `⚠️ Potentiel HSM faible (${potHsm.toFixed(2)}) : précipitation avancée au bobinage — risque élevé de Rejet Doux (Rp < 460).\n`;
     }
@@ -628,9 +628,9 @@ function renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, simInpu
       const rp = predictRow(betaRp, features, testObj);
       const rm = predictRow(betaRm, features, testObj);
       const pRp = 1 - normCdf((460 - rp) / sRp);
-      const pRm = normCdf((610 - rm) / sRm);
+      const pRm = normCdf((680 - rm) / sRm);
             const prob = Math.round((pRp * pRm) * 100);
-      const isOk = rp >= 460 && rm <= 610;
+      const isOk = rp >= 460 && rm <= 680;
       const bg = !isOk ? '#fee2e2' : (prob >= 55 ? '#dcfce7' : '#fef9c3');
 
       const isBestCell = (t === Math.round(bestT) && (v === undefined || v === null || isNaN(v) || Math.round(v) === Math.round(bestV)));
@@ -644,7 +644,7 @@ function renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, simInpu
   });
     html += `</tbody></table>
   <div style="font-size: 0.78em; color: #64748b; margin-top: 4px;">
-    🟢 Vert : Conforme (≥55%) &nbsp;|&nbsp; 🟡 Jaune : Conforme mais marge serrée (&lt;55%) &nbsp;|&nbsp; 🔴 Rouge : Hors cible (Rp &lt; 460 ou Rm &gt; 610) &nbsp;|&nbsp; Cadre vert épais : Consigne recommandée.
+    🟢 Vert : Conforme (≥55%) &nbsp;|&nbsp; 🟡 Jaune : Conforme mais marge serrée (&lt;55%) &nbsp;|&nbsp; 🔴 Rouge : Hors cible (Rp &lt; 460 ou Rm &gt; 680) &nbsp;|&nbsp; Cadre vert épais : Consigne recommandée.
   </div>`;
 
   container.innerHTML = html;
