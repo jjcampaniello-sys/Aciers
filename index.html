@@ -54,7 +54,9 @@
       <div class="kpi"><div>Taux de Rejet Global</div><h2 id="kpiRejet">-</h2><small>Objectif : &lt; 5.0 %</small></div>
       <div class="kpi"><div>Rejets Doux (Rp &lt; 460)</div><h2 id="kpiDoux">-</h2></div>
       <div class="kpi"><div>Rejets Durs (Rm &gt; 610)</div><h2 id="kpiDur">-</h2></div>
-      <div class="kpi"><div>Bobines Valides</div><h2 id="kpiTotal">-</h2></div>
+      <div class="kpi"><div>Doubles Rejets</div><h2 id="kpiDouble">-</h2></div>
+<div class="kpi"><div>Bobines analysées</div><h2 id="kpiTotal">-</h2></div>
+
     </div>
     
     <div class="card">
@@ -200,6 +202,13 @@ function parseSheet() {
     headers.forEach((h, i) => obj[h] = r[i]);
     return obj;
   });
+  try {
+    const saved = JSON.parse(localStorage.getItem('hsla_mapping') || '{}');
+    FIELDS.forEach(f => {
+      const sel = document.getElementById(`map_${f.id}`);
+      if (sel && saved[f.id] && headers.includes(saved[f.id])) sel.value = saved[f.id];
+    });
+  } catch (e) {}
 
   document.getElementById('mappingGrid').innerHTML = FIELDS.map(f => `
     <div>
@@ -217,6 +226,11 @@ function runAnalysis() {
   for (let f of FIELDS.filter(x => x.req)) {
     if (!document.getElementById(`map_${f.id}`).value) return alert(`Associez la colonne obligatoire : ${f.label}`);
   }
+  try {
+    const m = {};
+    FIELDS.forEach(f => { m[f.id] = document.getElementById(`map_${f.id}`).value; });
+    localStorage.setItem('hsla_mapping', JSON.stringify(m));
+  } catch (e) {}
 
   processedData = [];
   rawData.forEach(row => {
@@ -259,11 +273,13 @@ function applyDirectionFilter() {
   const conf = processedData.filter(d => d.Statut === 'Conforme').length;
   const doux = processedData.filter(d => d.Statut === 'Rejet Doux (Rp<460)').length;
   const dur = processedData.filter(d => d.Statut === 'Rejet Dur (Rm>610)').length;
-
+  const dbl = processedData.filter(d => d.Statut === 'Double Rejet').length;
+  
   document.getElementById('kpiTotal').innerText = total;
   document.getElementById('kpiRejet').innerText = (((total - conf) / total) * 100).toFixed(1) + ' %';
   document.getElementById('kpiDoux').innerText = ((doux / total) * 100).toFixed(1) + ' %';
   document.getElementById('kpiDur').innerText = ((dur / total) * 100).toFixed(1) + ' %';
+    document.getElementById('kpiDouble').innerText = ((dbl / total) * 100).toFixed(1) + ' %';
   drawBarChart();
   setupRegimeControls();
   populateCoilSelector();
@@ -416,6 +432,90 @@ function fitOLS(data, xCols, yCol) {
     beta[i] /= aug[i][i];
   }
   return beta;
+}
+function predictRow(beta, xCols, row) {
+  return beta[0] + xCols.reduce((a, c, j) => a + beta[j + 1] * row[c], 0);
+}
+
+function fitQuality(data, xCols, yCol, beta) {
+  const mean = data.reduce((a, r) => a + r[yCol], 0) / data.length;
+  let sse = 0, sst = 0;
+  data.forEach(r => {
+    sse += (r[yCol] - predictRow(beta, xCols, r)) ** 2;
+    sst += (r[yCol] - mean) ** 2;
+  });
+  return { r2: 1 - sse / sst, rmse: Math.sqrt(sse / data.length) };
+}
+
+// Erreur hors échantillon (validation croisée, 5 blocs)
+function cvRMSE(data, xCols, yCol, k = 5) {
+  let sse = 0, cnt = 0;
+  for (let f = 0; f < k; f++) {
+    const train = data.filter((_, i) => i % k !== f);
+    const test = data.filter((_, i) => i % k === f);
+    const b = fitOLS(train, xCols, yCol);
+    if (!b) return NaN;
+    test.forEach(r => { sse += (r[yCol] - predictRow(b, xCols, r)) ** 2; cnt++; });
+  }
+  return Math.sqrt(sse / cnt);
+}
+
+function normCdf(z) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989423 * Math.exp(-z * z / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return z > 0 ? 1 - p : p;
+}
+5. Simulateur : remplacement de la fin de simulateOptimalTrecuit(). Supprime tout depuis la ligne const betaRp = fitOLS(trainSet, features, 'Rp'); jusqu'à l'accolade } qui ferme la fonction (juste avant function populateCoilSelector()). Colle à la place :
+  const betaRp = fitOLS(trainSet, features, 'Rp');
+  const betaRm = fitOLS(trainSet, features, 'Rm');
+
+  if (!betaRp || !betaRm) {
+    out.innerText = "Données insuffisantes pour calibrer les équations prédictives.";
+    return;
+  }
+
+  const qRp = fitQuality(trainSet, features, 'Rp', betaRp);
+  const qRm = fitQuality(trainSet, features, 'Rm', betaRm);
+  const sRp = cvRMSE(trainSet, features, 'Rp') || qRp.rmse;
+  const sRm = cvRMSE(trainSet, features, 'Rm') || qRm.rmse;
+
+  // Plage explorée = 5e à 95e centile de T_recuit observé (pas d'extrapolation)
+  const ts = trainSet.map(d => d.T_recuit).sort((a, b) => a - b);
+  const tMin = Math.floor(ts[Math.floor(0.05 * (ts.length - 1))]);
+  const tMax = Math.ceil(ts[Math.ceil(0.95 * (ts.length - 1))]);
+
+  const grid = [];
+  for (let t = tMin; t <= tMax; t++) {
+    const row = { ...simInputs, T_recuit: t };
+    const predRp = predictRow(betaRp, features, row);
+    const predRm = predictRow(betaRm, features, row);
+    const pRp = 1 - normCdf((460 - predRp) / sRp);
+    const pRm = normCdf((610 - predRm) / sRm);
+    // Borne basse (Fréchet) : prudente, car Rp et Rm sont corrélés
+    grid.push({ t, predRp, predRm, pOk: Math.max(0, pRp + pRm - 1) });
+  }
+
+  const maxP = Math.max(...grid.map(g => g.pOk));
+  const plateau = grid.filter(g => g.pOk >= maxP - 0.005);
+  const best = plateau[Math.floor(plateau.length / 2)];
+  const okRange = grid.filter(g => g.pOk >= 0.95);
+
+  let txt = `Régime détecté : ${targetRegime} (calibré sur ${trainSet.length} essais)\n`;
+  txt += `Variables actives : ${features.join(', ')}\n`;
+  if (!isNaN(nbEff) || !isNaN(cEq)) {
+    txt += `Indices calculés  : ${!isNaN(nbEff) ? 'Nb_eff = ' + nbEff.toFixed(4) + '% ' : ''}${!isNaN(cEq) ? '| C_eq = ' + cEq.toFixed(3) + '%' : ''}\n`;
+  }
+  txt += `Qualité modèle : Rp R²=${qRp.r2.toFixed(2)} (±${sRp.toFixed(1)} MPa hors échantillon) | Rm R²=${qRm.r2.toFixed(2)} (±${sRm.toFixed(1)} MPa)\n`;
+  txt += `Plage T_recuit explorée (historique) : ${tMin}–${tMax} °C\n`;
+  txt += `${'-'.repeat(66)}\n`;
+  txt += `CONSIGNE T_recuit = ${best.t} °C → Rp prévu ${best.predRp.toFixed(1)} MPa | Rm prévu ${best.predRm.toFixed(1)} MPa\n`;
+  txt += `Probabilité de conformité (borne basse) : ${(best.pOk * 100).toFixed(0)} %\n`;
+  if (okRange.length) txt += `Plage à ≥ 95 % : ${okRange[0].t} – ${okRange[okRange.length - 1].t} °C\n`;
+  else txt += `⚠️ Aucune température de la plage n'atteint 95 % : bobine à risque.\n`;
+  if (best.t === tMin || best.t === tMax) txt += `⚠️ Optimum en bord de plage observée : extrapolation, à valider côté procédé.\n`;
+  if (qRp.r2 < 0.3 || qRm.r2 < 0.3) txt += `⚠️ Modèle peu explicatif (R² < 0.3) : consigne indicative seulement.\n`;
+  out.innerText = txt;
 }
 
 function simulateOptimalTrecuit() {
