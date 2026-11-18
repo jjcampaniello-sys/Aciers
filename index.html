@@ -241,6 +241,9 @@ function runAnalysis() {
   });
   allProcessedData = [...processedData];
   applyDirectionFilter();
+  if (document.getElementById('simOutput').style.display === 'block') {
+  simulateOptimalTrecuit();
+}
 }
 
 function applyDirectionFilter() {
@@ -302,7 +305,14 @@ function formatLeaf(arr) {
   const dur = arr.filter(d => d.Statut === 'Rejet Dur (Rm>610)').length;
   const pctOk = Math.round((ok / n) * 100);
   if (pctOk >= 85) return `[FENÊTRE SÛRE] ${n} bobines → ${pctOk}% Conformes`;
-  const cause = dur >= doux ? `Rejet Dur (${Math.round((dur/n)*100)}%)` : `Rejet Doux (${Math.round((doux/n)*100)}%)`;
+ const dbl = arr.filter(d => d.Statut === 'Double Rejet').length;
+const causes = [
+  { label: `Rejet Dur (${Math.round((dur/n)*100)}%)`, val: dur },
+  { label: `Rejet Doux (${Math.round((doux/n)*100)}%)`, val: doux },
+  { label: `Double Rejet (${Math.round((dbl/n)*100)}%)`, val: dbl }
+].sort((a, b) => b.val - a.val);
+const cause = causes[0].label;
+
   return `[ZONE À RISQUE] ${n} bobines → ${pctOk}% Conformes | Défaut dominant : ${cause}`;
 }
 
@@ -565,7 +575,7 @@ function fillSimulatorFromCoil() {
   if (!id) return;
   const row = processedData.find(d => d.CoilID === id);
   if (!row) return;
-  const set = (el, v) => { if (!isNaN(v)) document.getElementById(el).value = v; };
+const set = (el, v) => { document.getElementById(el).value = !isNaN(v) ? v : ''; };
   set('sim_Th', row.Th); set('sim_CR', row.CR); set('sim_CT', row.CT);
   set('sim_C', row.C); set('sim_Mn', row.Mn);
   set('sim_Nb', row.Nb); set('sim_Ti', row.Ti); set('sim_N', row.N);
