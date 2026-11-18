@@ -118,11 +118,11 @@
       </div>
 
       <button onclick="simulateOptimalTrecuit()" style="background: #16a34a;">Calculer la consigne T_recuit optimale</button>
-            <div id="simOutput" class="sim-result"></div>
+                  <button onclick="simulateOptimalTrecuit()" style="background: #16a34a;">Calculer la consigne T_recuit optimale</button>
+      <div id="simOutput" class="rules-box" style="margin-top: 15px; display: none;"></div>
       <div id="simSensitivityTable" style="margin-top: 14px; overflow-x: auto;"></div>
     </div>
 
-    </div>
   </div>
 </div>
 
@@ -462,6 +462,8 @@ function normCdf(z) {
 function simulateOptimalTrecuit() {
   const out = document.getElementById('simOutput');
   out.style.display = 'block';
+  const tableDiv = document.getElementById('simSensitivityTable');
+  if (tableDiv) tableDiv.innerHTML = '';
 
   if (!processedData.length) {
     out.innerText = "Lancez d'abord l'analyse sur un fichier.";
@@ -580,18 +582,15 @@ function simulateOptimalTrecuit() {
     else if (potHsm <= 0.32) txt += `⚠️ Potentiel HSM faible (${potHsm.toFixed(2)}) : précipitation avancée au bobinage — risque élevé de Rejet Doux (Rp < 460) même à basse T_recuit.\n`;
   }
 
-    out.innerText = txt;
+       out.innerText = txt;
   renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, predictPoint, simInputs, feats, mu, sd, wRp, wRm, rmseRp, rmseRm);
 }
-function renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, predictPoint, simInputs, feats, mu, sd, wRp, wRm, rmseRp, rmseRm) {
+
+function renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, simInputs, features, betaRp, betaRm, sRp, sRm) {
   const container = document.getElementById('simSensitivityTable');
   if (!container) return;
-
-  // Générer 5 températures autour de bestT (pas de 2 °C, bornées à l'historique)
-  const startT = Math.max(Math.round(tMin), Math.min(Math.round(tMax) - 8, Math.round(bestT) - 2));
+  const startT = Math.max(Math.round(tMin), Math.min(Math.round(tMax) - 8, Math.round(bestT) - 4));
   const temps = [0, 2, 4, 6, 8].map(d => startT + d).filter(t => t <= Math.round(tMax));
-
-  // Générer 3 vitesses (basse, recommandée, haute) ou la vitesse fixée
   let speeds = [];
   if (vFixed || vGrid.length <= 1) {
     speeds = [vGrid[0]];
@@ -600,44 +599,32 @@ function renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, predict
     const vHigh = Math.round(vGrid[vGrid.length - 1]);
     speeds = [...new Set([vLow, Math.round(bestV), vHigh])].sort((a, b) => a - b);
   }
-
   let html = `<div style="font-size: 0.9em; font-weight: bold; margin-bottom: 6px; color: #1e293b;">
     📊 Grille de sensibilité (Rp / Rm prévus et probabilité de conformité) :
   </div>
   <table style="width: 100%; border-collapse: collapse; font-size: 0.85em; text-align: center; background: #fff;">
     <thead>
       <tr style="background: #f1f5f9; border-bottom: 2px solid #cbd5e1;">
-        <th style="padding: 6px; border: 1px solid #cbd5e1;">Vitesse \ T_recuit</th>
+        <th style="padding: 6px; border: 1px solid #cbd5e1;">Vitesse \\ T_recuit</th>
         ${temps.map(t => `<th style="padding: 6px; border: 1px solid #cbd5e1;">${t} °C</th>`).join('')}
       </tr>
     </thead>
     <tbody>`;
-
   speeds.forEach(v => {
-    const vLabel = (v === null || isNaN(v)) ? 'Standard' : `${v}`;
+    const vLabel = (v === undefined || v === null || isNaN(v)) ? 'Standard' : `${v}`;
     html += `<tr><td style="padding: 6px; font-weight: bold; background: #f8fafc; border: 1px solid #cbd5e1;">V = ${vLabel}</td>`;
     temps.forEach(t => {
       const testObj = { ...simInputs, T_recuit: t };
-      if (v !== null && !isNaN(v)) testObj.V_galva = v;
-
-      // Calcul prédiction Rp et Rm
-      const x =;
-      feats.forEach(f => x.push((testObj[f] - mu[f]) / sd[f]));
-      const rp = x.reduce((acc, val, i) => acc + val * wRp[i], 0);
-      const rm = x.reduce((acc, val, i) => acc + val * wRm[i], 0);
-
-      // Probabilité conjointe (Rp >= 460 et Rm <= 610)
-      const zRp = (rp - 460) / (rmseRp || 15);
-      const zRm = (610 - rm) / (rmseRm || 15);
-      const normCdf = z => 0.5 * (1 + Math.sign(z) * Math.sqrt(1 - Math.exp(-2 * z * z / Math.PI)));
-      const prob = Math.round(normCdf(zRp) * normCdf(zRm) * 100);
-
-      // Couleur selon conformité
+      if (v !== undefined && v !== null && !isNaN(v)) testObj.V_galva = v;
+      const rp = predictRow(betaRp, features, testObj);
+      const rm = predictRow(betaRm, features, testObj);
+      const pRp = 1 - normCdf((460 - rp) / sRp);
+      const pRm = normCdf((610 - rm) / sRm);
+      const prob = Math.round(Math.max(0, pRp + pRm - 1) * 100);
       const isOk = rp >= 460 && rm <= 610;
       const bg = !isOk ? '#fee2e2' : (prob >= 70 ? '#dcfce7' : '#fef9c3');
-      const borderOpt = (t === Math.round(bestT) && (v === null || Math.round(v) === Math.round(bestV)))
-        ? '2px solid #16a34a' : '1px solid #cbd5e1';
-
+      const isBestCell = (t === Math.round(bestT) && (v === undefined || v === null || isNaN(v) || Math.round(v) === Math.round(bestV)));
+      const borderOpt = isBestCell ? '3px solid #16a34a' : '1px solid #cbd5e1';
       html += `<td style="padding: 6px; background: ${bg}; border: ${borderOpt};">
         <div><b>Rp ${rp.toFixed(0)}</b> | Rm ${rm.toFixed(0)}</div>
         <div style="font-size: 0.85em; color: #334155;">Conf. : <b>${prob}%</b></div>
@@ -645,12 +632,10 @@ function renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, predict
     });
     html += `</tr>`;
   });
-
   html += `</tbody></table>
   <div style="font-size: 0.78em; color: #64748b; margin-top: 4px;">
     🟢 Vert : Conforme (≥70%) &nbsp;|&nbsp; 🟡 Jaune : Conforme mais marge serrée (&lt;70%) &nbsp;|&nbsp; 🔴 Rouge : Hors cible (Rp &lt; 460 ou Rm &gt; 610) &nbsp;|&nbsp; Cadre vert épais : Consigne recommandée.
   </div>`;
-
   container.innerHTML = html;
 }
 
@@ -669,7 +654,9 @@ function fillSimulatorFromCoil() {
   const row = processedData.find(d => d.CoilID === id);
   if (!row) return;
 const set = (el, v) => { document.getElementById(el).value = !isNaN(v) ? v : ''; };
-    set('sim_Th', row.Th); set('sim_CR', row.CR); set('sim_CT', row.CT); set('sim_Vrot', row.V_rot);
+      document.getElementById('sim_V').value = '';
+
+  set('sim_Th', row.Th); set('sim_CR', row.CR); set('sim_CT', row.CT); set('sim_Vrot', row.V_rot);
   set('sim_C', row.C); set('sim_Mn', row.Mn);
   set('sim_Nb', row.Nb); set('sim_Ti', row.Ti); set('sim_N', row.N);
   simulateOptimalTrecuit();
