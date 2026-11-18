@@ -108,7 +108,7 @@
         <div><label>Épaisseur finale Th (mm) * :</label><input type="number" id="sim_Th" step="0.01" value="1.55" /></div>
         <div><label>Réduction à froid %CR * :</label><input type="number" id="sim_CR" step="0.1" value="56.5" /></div>
         <div><label>Temp. Bobinage réel CT (°C) * :</label><input type="number" id="sim_CT" step="1" value="555" /></div>
-        <div><label>Vitesse galva / refroid. (opt.) :</label><input type="number" id="sim_V" step="1" placeholder="ex: 100" /></div>
+        <div><label>Vitesse galva (vide = recommandée) :</label><input type="number" id="sim_V" step="1" placeholder="ex: 100" /></div>
         <div><label>Carbone C wt% (opt.) :</label><input type="number" id="sim_C" step="0.001" placeholder="ex: 0.072" /></div>
         <div><label>Manganèse Mn wt% (opt.) :</label><input type="number" id="sim_Mn" step="0.01" placeholder="ex: 1.50" /></div>
         <div><label>Niobium Nb wt% (opt.) :</label><input type="number" id="sim_Nb" step="0.001" placeholder="ex: 0.040" /></div>
@@ -474,7 +474,7 @@ function simulateOptimalTrecuit() {
   // Variables utilisables : renseignées en entrée ET couvertes à ≥ 80 % dans l'historique
   const candidates = ['T_recuit', 'CT', 'CR', 'Th', 'V_galva', 'Nb_eff', 'C_eq'];
   const features = candidates.filter(f => {
-    if (f !== 'T_recuit' && isNaN(simInputs[f])) return false;
+    if (f !== 'T_recuit' && f !== 'V_galva' && isNaN(simInputs[f])) return false;
     return pool.filter(d => !isNaN(d[f])).length >= 0.8 * pool.length;
   });
   const trainSet = pool.filter(d => features.every(f => !isNaN(d[f])));
@@ -497,20 +497,37 @@ function simulateOptimalTrecuit() {
   const tMin = Math.floor(ts[Math.floor(0.05 * (ts.length - 1))]);
   const tMax = Math.ceil(ts[Math.ceil(0.95 * (ts.length - 1))]);
 
+  // Vitesse galva : fixe si saisie, sinon optimisée sur 5e–95e centile observé
+  const useV = features.includes('V_galva');
+  const vFixed = useV && !isNaN(simInputs.V_galva);
+  let vGrid = [NaN], vMin = NaN, vMax = NaN;
+  if (useV && !vFixed) {
+    const vs = trainSet.map(d => d.V_galva).sort((a, b) => a - b);
+    vMin = vs[Math.floor(0.05 * (vs.length - 1))];
+    vMax = vs[Math.ceil(0.95 * (vs.length - 1))];
+    vGrid = [];
+    for (let i = 0; i <= 20; i++) vGrid.push(vMin + (vMax - vMin) * i / 20);
+  } else if (vFixed) vGrid = [simInputs.V_galva];
+
   const grid = [];
-  for (let t = tMin; t <= tMax; t++) {
-    const row = { ...simInputs, T_recuit: t };
+  for (let t = tMin; t <= tMax; t++) for (const v of vGrid) {
+    const row = { ...simInputs, T_recuit: t, V_galva: v };
     const predRp = predictRow(betaRp, features, row);
     const predRm = predictRow(betaRm, features, row);
     const pRp = 1 - normCdf((460 - predRp) / sRp);
     const pRm = normCdf((610 - predRm) / sRm);
     // Borne basse (Fréchet) : prudente, car Rp et Rm sont corrélés
-    grid.push({ t, predRp, predRm, pOk: Math.max(0, pRp + pRm - 1) });
+    grid.push({ t, v, predRp, predRm, pOk: Math.max(0, pRp + pRm - 1) });
   }
 
   const maxP = Math.max(...grid.map(g => g.pOk));
   const plateau = grid.filter(g => g.pOk >= maxP - 0.005);
-  const best = plateau[Math.floor(plateau.length / 2)];
+  const tMid = (tMin + tMax) / 2;
+  const best = plateau.reduce((a, b) => {
+    const da = Math.abs(a.t - tMid) + (vGrid.length > 1 ? Math.abs(a.v - (vMin + vMax) / 2) / (vMax - vMin) * (tMax - tMin) : 0);
+    const db = Math.abs(b.t - tMid) + (vGrid.length > 1 ? Math.abs(b.v - (vMin + vMax) / 2) / (vMax - vMin) * (tMax - tMin) : 0);
+    return db < da ? b : a;
+  });
   const okRange = grid.filter(g => g.pOk >= 0.95);
 
   let txt = `Régime détecté : ${targetRegime} (calibré sur ${trainSet.length} essais)\n`;
@@ -521,11 +538,16 @@ function simulateOptimalTrecuit() {
   txt += `Qualité modèle : Rp R²=${qRp.r2.toFixed(2)} (±${sRp.toFixed(1)} MPa hors échantillon) | Rm R²=${qRm.r2.toFixed(2)} (±${sRm.toFixed(1)} MPa)\n`;
   txt += `Plage T_recuit explorée (historique) : ${tMin}–${tMax} °C\n`;
   txt += `${'-'.repeat(66)}\n`;
-  txt += `CONSIGNE T_recuit = ${best.t} °C → Rp prévu ${best.predRp.toFixed(1)} MPa | Rm prévu ${best.predRm.toFixed(1)} MPa\n`;
+  if (vGrid.length > 1) txt += `Plage vitesse galva explorée : ${vMin.toFixed(0)}–${vMax.toFixed(0)}\n`;
+  txt += `CONSIGNE T_recuit = ${best.t} °C${vGrid.length > 1 ? ' | VITESSE GALVA recommandée = ' + best.v.toFixed(0) : (vFixed ? ' (vitesse fixée à ' + simInputs.V_galva + ')' : '')} → Rp prévu ${best.predRp.toFixed(1)} MPa | Rm prévu ${best.predRm.toFixed(1)} MPa\n`;
   txt += `Probabilité de conformité (borne basse) : ${(best.pOk * 100).toFixed(0)} %\n`;
-  if (okRange.length) txt += `Plage à ≥ 95 % : ${okRange[0].t} – ${okRange[okRange.length - 1].t} °C\n`;
+  if (okRange.length) {
+    const ots = okRange.map(g => g.t);
+    txt += `Plage T à ≥ 95 % : ${Math.min(...ots)} – ${Math.max(...ots)} °C\n`;
+    if (vGrid.length > 1) { const ovs = okRange.map(g => g.v); txt += `Plage vitesse à ≥ 95 % : ${Math.min(...ovs).toFixed(0)} – ${Math.max(...ovs).toFixed(0)}\n`; }
+  }
   else txt += `⚠️ Aucune température de la plage n'atteint 95 % : bobine à risque.\n`;
-  if (best.t === tMin || best.t === tMax) txt += `⚠️ Optimum en bord de plage observée : extrapolation, à valider côté procédé.\n`;
+  if (best.t === tMin || best.t === tMax || (vGrid.length > 1 && (best.v === vMin || best.v === vMax))) txt += `⚠️ Optimum en bord de plage observée : extrapolation, à valider côté procédé.\n`;
   if (qRp.r2 < 0.3 || qRm.r2 < 0.3) txt += `⚠️ Modèle peu explicatif (R² < 0.3) : consigne indicative seulement.\n`;
   out.innerText = txt;
 }
@@ -545,7 +567,7 @@ function fillSimulatorFromCoil() {
   if (!row) return;
   const set = (el, v) => { if (!isNaN(v)) document.getElementById(el).value = v; };
   set('sim_Th', row.Th); set('sim_CR', row.CR); set('sim_CT', row.CT);
-  set('sim_V', row.V_galva); set('sim_C', row.C); set('sim_Mn', row.Mn);
+  set('sim_C', row.C); set('sim_Mn', row.Mn);
   set('sim_Nb', row.Nb); set('sim_Ti', row.Ti); set('sim_N', row.N);
   simulateOptimalTrecuit();
 }
