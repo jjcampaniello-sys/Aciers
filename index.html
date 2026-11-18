@@ -467,7 +467,7 @@ function normCdf(z) {
   return z > 0 ? 1 - p : p;
 }
 5. Simulateur : remplacement de la fin de simulateOptimalTrecuit(). Supprime tout depuis la ligne const betaRp = fitOLS(trainSet, features, 'Rp'); jusqu'à l'accolade } qui ferme la fonction (juste avant function populateCoilSelector()). Colle à la place :
-  const betaRp = fitOLS(trainSet, features, 'Rp');
+    const betaRp = fitOLS(trainSet, features, 'Rp');
   const betaRm = fitOLS(trainSet, features, 'Rm');
 
   if (!betaRp || !betaRm) {
@@ -518,101 +518,6 @@ function normCdf(z) {
   out.innerText = txt;
 }
 
-function simulateOptimalTrecuit() {
-  const out = document.getElementById('simOutput');
-  out.style.display = 'block';
-
-  const th = parseFloat(document.getElementById('sim_Th').value);
-  const cr = parseFloat(document.getElementById('sim_CR').value);
-  const ct = parseFloat(document.getElementById('sim_CT').value);
-  const v = parseFloat(document.getElementById('sim_V').value);
-
-  const c = parseFloat(document.getElementById('sim_C').value);
-  const mn = parseFloat(document.getElementById('sim_Mn').value);
-  const nb = parseFloat(document.getElementById('sim_Nb').value);
-  const ti = parseFloat(document.getElementById('sim_Ti').value);
-  const n = parseFloat(document.getElementById('sim_N').value);
-
-  // Calcul automatique des indices métallurgiques bruts
-  const cEq = (!isNaN(c) && !isNaN(mn)) ? (c + mn / 6.0) : NaN;
-  const nbEff = (!isNaN(nb) && !isNaN(n) && !isNaN(ti)) ? (nb - Math.max(0, 6.64 * (n - 0.292 * ti))) : NaN;
-
-  let targetRegime = 'Régime B (Transition)';
-  if (th >= 1.4 || cr < 58) targetRegime = 'Régime A (Fortes ép. / Bas %CR)';
-  else if (th <= 1.0 || cr > 63) targetRegime = 'Régime C (Fines ép. / Haut %CR)';
-
-  let trainSet = processedData.filter(d => d.Regime === targetRegime);
-  if (trainSet.length < 10) trainSet = processedData;
-
-  // Sélection automatique des variables disponibles (Procédé + Chimie)
-  let features = ['Th', 'CR', 'CT', 'T_recuit'];
-  let simInputs = { Th: th, CR: cr, CT: ct };
-
-  if (trainSet.every(d => !isNaN(d.V_galva)) && !isNaN(v)) { features.push('V_galva'); simInputs.V_galva = v; }
-  if (trainSet.every(d => !isNaN(d.Nb_eff)) && !isNaN(nbEff)) { features.push('Nb_eff'); simInputs.Nb_eff = nbEff; }
-  if (trainSet.every(d => !isNaN(d.C_eq)) && !isNaN(cEq)) { features.push('C_eq'); simInputs.C_eq = cEq; }
-
-  const betaRp = fitOLS(trainSet, features, 'Rp');
-  const betaRm = fitOLS(trainSet, features, 'Rm');
-
-  if (!betaRp || !betaRm) {
-    out.innerText = "Données insuffisantes pour calibrer les équations prédictives.";
-    return;
-  }
-
-    let bestT = null, bestV = v, bestMargin = -999, bestRp = 0, bestRm = 0;
-  let validPairs = [];
-
-  // Plage de vitesses testées : ±25 m/min autour de la vitesse actuelle (ou vitesse fixe si non renseignée)
-  const vList = (!isNaN(v) && features.includes('V_galva')) 
-    ? [v - 25, v - 15, v - 10, v - 5, v, v + 5, v + 10, v + 15, v + 25].filter(val => val >= 50 && val <= 200)
-    : [v];
-
-  for (let candV of vList) {
-    for (let t = 745; t <= 810; t += 1) {
-      const xVec = [1, ...features.map(f => f === 'T_recuit' ? t : (f === 'V_galva' ? candV : simInputs[f]))];
-      const predRp = xVec.reduce((acc, val, idx) => acc + val * betaRp[idx], 0);
-      const predRm = xVec.reduce((acc, val, idx) => acc + val * betaRm[idx], 0);
-
-      const margin = Math.min(predRp - 460, 610 - predRm);
-      if (margin >= 0) validPairs.push({ t, candV, margin });
-
-      // On privilégie la marge maximale, et à marge proche on reste proche de la vitesse initiale
-      const score = margin - (isNaN(v) ? 0 : Math.abs(candV - v) * 0.05);
-      if (score > bestMargin) {
-        bestMargin = score;
-        bestT = t;
-        bestV = candV;
-        bestRp = predRp;
-        bestRm = predRm;
-      }
-    }
-  }
-
-  let txt = `Régime détecté : ${targetRegime} (calibré sur ${trainSet.length} essais)\n`;
-  txt += `Variables actives : ${features.join(', ')}\n`;
-  if (!isNaN(nbEff) || !isNaN(cEq)) {
-    txt += `Indices calculés  : ${!isNaN(nbEff) ? 'Nb_eff = ' + nbEff.toFixed(4) + '% ' : ''}${!isNaN(cEq) ? '| C_eq = ' + cEq.toFixed(3) + '%' : ''}\n`;
-  }
-  txt += `------------------------------------------------------------------\n`;
-
-  if (validPairs.length > 0) {
-    const validTempsAtBestV = validPairs.filter(p => p.candV === bestV).map(p => p.t);
-    txt += `✅ RÉGLAGE OPTIMAL RECOMMANDÉ :\n`;
-    txt += `   • Température de recuit (T_recuit) : ${bestT} °C (plage autorisée : [${Math.min(...validTempsAtBestV)} – ${Math.max(...validTempsAtBestV)} °C])\n`;
-    if (!isNaN(bestV) && features.includes('V_galva')) {
-      const diffV = bestV - v;
-      const noteV = diffV === 0 ? "inchangée" : (diffV > 0 ? `+${diffV} m/min vs initiale` : `${diffV} m/min vs initiale`);
-      txt += `   • Vitesse ligne galva (V_galva)    : ${bestV} m/min (${noteV})\n`;
-    }
-    txt += `   • Prédiction mécanique → Rp = ${bestRp.toFixed(1)} MPa (min 460) | Rm = ${bestRm.toFixed(1)} MPa (max 610)`;
-  } else {
-    txt += `⚠️ ALERTE BOBINE HORS FENÊTRE : Aucun couple (T_recuit / Vitesse) ne garantit Rp >= 460 et Rm <= 610.\n`;
-    txt += `   Meilleur compromis : T_recuit = ${bestT} °C${!isNaN(bestV) ? ' à ' + bestV + ' m/min' : ''} → Rp = ${bestRp.toFixed(1)} MPa | Rm = ${bestRm.toFixed(1)} MPa`;
-  }
-  out.innerText = txt;
-
-}
 function populateCoilSelector() {
   const sel = document.getElementById('sim_CoilSelect');
   if (!sel) return;
