@@ -1,1 +1,576 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Optimisation HSLA - Fenêtre Procédé</title>
+  <link rel="manifest" href="manifest.json" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 20px; background: #f4f6f9; color: #1f2937; }
+    .container { max-width: 1200px; margin: auto; }
+    .card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+    select, input, button { width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #cbd5e1; border-radius: 5px; box-sizing: border-box; }
+    button { background: #2563eb; color: #fff; font-weight: 600; border: none; cursor: pointer; margin-top: 15px; }
+    button:hover { background: #1d4ed8; }
+    .kpi { text-align: center; padding: 15px; background: #eff6ff; border-radius: 6px; border: 1px solid #bfdbfe; }
+    .kpi h2 { margin: 5px 0; color: #1e40af; }
+    .rules-box { background: #1e293b; color: #f8fafc; padding: 15px; border-radius: 6px; font-family: monospace; white-space: pre-wrap; line-height: 1.5; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Analyse Métallurgique &amp; Fenêtres Procédés (HSLA)</h1>
 
+  <div class="card">
+    <h3>1. Importer votre fichier industriel (.xlsm, .xlsx, .csv)</h3>
+    <input type="file" id="fileInput" accept=".xlsm,.xlsx,.xls,.csv" />
+    <div id="sheetControls" class="grid hidden" style="margin-top:15px;">
+      <div>
+        <label>Onglet des données :</label>
+        <select id="sheetSelect"></select>
+      </div>
+      <div>
+        <label>Ligne des en-têtes (1 = 1ère ligne) :</label>
+        <input type="number" id="headerRow" value="1" min="1" max="30" />
+      </div>
+      <div>
+        <button onclick="parseSheet()">Charger les colonnes</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="mappingCard" class="card hidden">
+    <h3>2. Associer vos colonnes Excel</h3>
+    <div class="grid" id="mappingGrid"></div>
+    <button onclick="runAnalysis()">Lancer l'analyse complète</button>
+  </div>
+
+  <div id="resultsSection" class="hidden">
+    <div class="card grid">
+      <div class="kpi"><div>Taux de Rejet Global</div><h2 id="kpiRejet">-</h2><small>Objectif : &lt; 5.0 %</small></div>
+      <div class="kpi"><div>Rejets Doux (Rp &lt; 460)</div><h2 id="kpiDoux">-</h2></div>
+      <div class="kpi"><div>Rejets Durs (Rm &gt; 610)</div><h2 id="kpiDur">-</h2></div>
+      <div class="kpi"><div>Doubles Rejets</div><h2 id="kpiDouble">-</h2></div>
+      <div class="kpi"><div>Bobines analysées</div><h2 id="kpiTotal">-</h2></div>
+    </div>
+
+    <div class="card">
+      <label><strong>Filtrer par Direction d'essai (BEPROEV_RICHTING) :</strong></label>
+      <select id="dirFilter" onchange="applyDirectionFilter()" style="max-width: 250px;">
+        <option value="L">L (Longitudinal — Référence)</option>
+        <option value="S">S (Transverse — 90°)</option>
+        <option value="D">D (Diagonal — 45°)</option>
+        <option value="TOUS">Toutes les directions</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <h3>3. Répartition des Rejets par Régime Procédé</h3>
+      <div id="barChart"></div>
+    </div>
+
+    <div class="card">
+      <h3>4. Règles d'Exclusion &amp; Fenêtre Opératoire 2D</h3>
+      <div class="grid">
+        <div>
+          <label>Régime Procédé :</label>
+          <select id="regimeFilter" onchange="updateRegimeView()"></select>
+        </div>
+        <div>
+          <label>Paramètre Axe X :</label>
+          <select id="xSelect" onchange="updateScatter()"></select>
+        </div>
+        <div>
+          <label>Paramètre Axe Y :</label>
+          <select id="ySelect" onchange="updateScatter()"></select>
+        </div>
+      </div>
+      <h4>Règles critiques détectées automatiquement (Arbre CART) :</h4>
+      <div id="treeRules" class="rules-box"></div>
+      <div id="scatterChart" style="margin-top:15px;"></div>
+    </div>
+
+    <div class="card" style="border-left: 5px solid #16a34a;">
+      <h3>5. Simulateur Dynamique : Consigne Recuit Optimale (Feed-Forward)</h3>
+      <p style="font-size: 13.5px; color: #475569;">Calibré automatiquement sur les données filtrées ci-dessus. Saisissez les paramètres mesurés à l'entrée de la ligne galva :</p>
+      <div style="margin-bottom: 12px;">
+        <label><strong>Charger automatiquement depuis un Code Bobine du fichier :</strong></label>
+        <select id="sim_CoilSelect" onchange="fillSimulatorFromCoil()" style="max-width: 300px;">
+          <option value="">-- Saisie manuelle --</option>
+        </select>
+      </div>
+
+      <div class="grid">
+        <div><label>Épaisseur finale Th (mm) * :</label><input type="number" id="sim_Th" step="0.01" value="1.55" /></div>
+        <div><label>Réduction à froid %CR * :</label><input type="number" id="sim_CR" step="0.1" value="56.5" /></div>
+        <div><label>Temp. Bobinage réel CT (°C) * :</label><input type="number" id="sim_CT" step="1" value="555" /></div>
+        <div><label>Vitesse galva (vide = recommandée) :</label><input type="number" id="sim_V" step="1" placeholder="ex: 100" /></div>
+        <div><label>Carbone C wt% (opt.) :</label><input type="number" id="sim_C" step="0.001" placeholder="ex: 0.072" /></div>
+        <div><label>Manganèse Mn wt% (opt.) :</label><input type="number" id="sim_Mn" step="0.01" placeholder="ex: 1.50" /></div>
+        <div><label>Niobium Nb wt% (opt.) :</label><input type="number" id="sim_Nb" step="0.001" placeholder="ex: 0.040" /></div>
+        <div><label>Titane Ti wt% (opt.) :</label><input type="number" id="sim_Ti" step="0.001" placeholder="ex: 0.010" /></div>
+        <div><label>Azote N wt% (opt.) :</label><input type="number" id="sim_N" step="0.0001" placeholder="ex: 0.0040" /></div>
+      </div>
+
+      <button onclick="simulateOptimalTrecuit()" style="background: #16a34a;">Calculer la consigne T_recuit optimale</button>
+      <div id="simOutput" class="rules-box" style="margin-top: 15px; display: none;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}
+
+let workbook = null, rawData = [], processedData = [], allProcessedData = [];
+
+const FIELDS = [
+  { id: 'Rp', label: 'Limite élasticité Rp (MPa) *', req: true },
+  { id: 'Rm', label: 'Résistance traction Rm (MPa) *', req: true },
+  { id: 'Th', label: 'Épaisseur finale (mm) *', req: true },
+  { id: 'CR', label: 'Réduction à froid %CR *', req: true },
+  { id: 'CT', label: 'Temp. Bobinage CT (°C) *', req: true },
+  { id: 'T_recuit', label: 'Temp. Recuit Galva (°C) *', req: true },
+  { id: 'V_galva', label: 'Vitesse ref. Galva', req: false },
+  { id: 'V_rot', label: 'Vitesse ref. ROT', req: false },
+  { id: 'Nb', label: 'Niobium Nb (wt%)', req: false },
+  { id: 'Ti', label: 'Titane Ti (wt%)', req: false },
+  { id: 'N', label: 'Azote N (wt%)', req: false },
+  { id: 'C', label: 'Carbone C (wt%)', req: false },
+  { id: 'Mn', label: 'Manganèse Mn (wt%)', req: false },
+  { id: 'Dir', label: 'Direction essai (BEPROEV_RICHTING)', req: false },
+  { id: 'CoilID', label: 'Code Bobine (ROL_IDENT)', req: false }
+];
+
+const STATUTS = ['Conforme', 'Rejet Doux (Rp<460)', 'Rejet Dur (Rm>610)', 'Double Rejet'];
+const COLORS = { 'Conforme': '#16a34a', 'Rejet Doux (Rp<460)': '#2563eb', 'Rejet Dur (Rm>610)': '#dc2626', 'Double Rejet': '#9333ea' };
+
+function getRegime(th, cr) {
+  if (th >= 1.4 || cr < 58) return 'Régime A (Fortes ép. / Bas %CR)';
+  if (th <= 1.0 || cr > 63) return 'Régime C (Fines ép. / Haut %CR)';
+  return 'Régime B (Transition)';
+}
+
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    workbook = XLSX.read(new Uint8Array(evt.target.result), { type: 'array' });
+    const sel = document.getElementById('sheetSelect');
+    sel.innerHTML = workbook.SheetNames.map(s => `<option value="${s}">${s}</option>`).join('');
+    document.getElementById('sheetControls').classList.remove('hidden');
+    parseSheet();
+  };
+  reader.readAsArrayBuffer(file);
+});
+
+function parseSheet() {
+  if (!workbook) return;
+  const sheetName = document.getElementById('sheetSelect').value;
+  const headerIdx = parseInt(document.getElementById('headerRow').value, 10) - 1;
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' });
+  if (rows.length <= headerIdx) return alert("Ligne d'en-tête invalide.");
+
+  const headers = rows[headerIdx].map((h, i) => h ? String(h).trim() : `Col_${i+1}`);
+  rawData = rows.slice(headerIdx + 1).map(r => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = r[i]);
+    return obj;
+  });
+
+  document.getElementById('mappingGrid').innerHTML = FIELDS.map(f => `
+    <div>
+      <label>${f.label}</label>
+      <select id="map_${f.id}">
+        <option value="">(Ignorer)</option>
+        ${headers.map(h => `<option value="${h}">${h}</option>`).join('')}
+      </select>
+    </div>
+  `).join('');
+
+  // Restauration du mapping (après création des listes)
+  try {
+    const saved = JSON.parse(localStorage.getItem('hsla_mapping') || '{}');
+    FIELDS.forEach(f => {
+      const sel = document.getElementById(`map_${f.id}`);
+      if (sel && saved[f.id] && headers.includes(saved[f.id])) sel.value = saved[f.id];
+    });
+  } catch (e) {}
+
+  document.getElementById('mappingCard').classList.remove('hidden');
+}
+
+function runAnalysis() {
+  for (const f of FIELDS.filter(x => x.req)) {
+    if (!document.getElementById(`map_${f.id}`).value) return alert(`Associez la colonne obligatoire : ${f.label}`);
+  }
+  try {
+    const m = {};
+    FIELDS.forEach(f => { m[f.id] = document.getElementById(`map_${f.id}`).value; });
+    localStorage.setItem('hsla_mapping', JSON.stringify(m));
+  } catch (e) {}
+
+  processedData = [];
+  rawData.forEach(row => {
+    const item = {};
+    FIELDS.forEach(f => {
+      const col = document.getElementById(`map_${f.id}`).value;
+      if (f.id === 'Dir') item[f.id] = col ? String(row[col]).trim().toUpperCase() : 'L';
+      else if (f.id === 'CoilID') item[f.id] = col ? String(row[col]).trim() : '';
+      else item[f.id] = col ? parseFloat(String(row[col]).replace(',', '.')) : NaN;
+    });
+
+    if ([item.Rp, item.Rm, item.Th, item.CR, item.CT, item.T_recuit].some(isNaN)) return;
+
+    if (item.Rp < 460 && item.Rm > 610) item.Statut = 'Double Rejet';
+    else if (item.Rp < 460) item.Statut = 'Rejet Doux (Rp<460)';
+    else if (item.Rm > 610) item.Statut = 'Rejet Dur (Rm>610)';
+    else item.Statut = 'Conforme';
+
+    if (!isNaN(item.Nb) && !isNaN(item.N) && !isNaN(item.Ti)) item.Nb_eff = item.Nb - Math.max(0, 6.64 * (item.N - 0.292 * item.Ti));
+    if (!isNaN(item.C) && !isNaN(item.Mn)) item.C_eq = item.C + item.Mn / 6.0;
+
+    item.Regime = getRegime(item.Th, item.CR);
+    processedData.push(item);
+  });
+  allProcessedData = [...processedData];
+  applyDirectionFilter();
+}
+
+function applyDirectionFilter() {
+  const dir = document.getElementById('dirFilter').value;
+  processedData = dir === 'TOUS' ? allProcessedData : allProcessedData.filter(d => d.Dir === dir);
+
+  if (processedData.length === 0) return alert("Aucune ligne trouvée pour cette direction d'essai.");
+
+  const total = processedData.length;
+  const count = s => processedData.filter(d => d.Statut === s).length;
+  const conf = count('Conforme');
+
+  document.getElementById('kpiTotal').innerText = total;
+  document.getElementById('kpiRejet').innerText = (((total - conf) / total) * 100).toFixed(1) + ' %';
+  document.getElementById('kpiDoux').innerText = ((count('Rejet Doux (Rp<460)') / total) * 100).toFixed(1) + ' %';
+  document.getElementById('kpiDur').innerText = ((count('Rejet Dur (Rm>610)') / total) * 100).toFixed(1) + ' %';
+  document.getElementById('kpiDouble').innerText = ((count('Double Rejet') / total) * 100).toFixed(1) + ' %';
+
+  document.getElementById('resultsSection').classList.remove('hidden');
+  drawBarChart();
+  setupRegimeControls();
+  populateCoilSelector();
+}
+
+function drawBarChart() {
+  const regimes = [...new Set(processedData.map(d => d.Regime))].sort();
+  const traces = STATUTS.map(st => ({
+    x: regimes,
+    y: regimes.map(r => processedData.filter(d => d.Regime === r && d.Statut === st).length),
+    name: st, type: 'bar', marker: { color: COLORS[st] }
+  }));
+  Plotly.newPlot('barChart', traces, { barmode: 'group', height: 340, margin: { t: 20 } });
+}
+
+function setupRegimeControls() {
+  const regimes = ['Tous', ...new Set(processedData.map(d => d.Regime))];
+  document.getElementById('regimeFilter').innerHTML = regimes.map(r => `<option value="${r}">${r}</option>`).join('');
+
+  const numCols = ['CT', 'T_recuit', 'V_galva', 'V_rot', 'CR', 'Th', 'Nb_eff', 'C_eq'].filter(k => processedData.some(d => !isNaN(d[k])));
+  const opts = numCols.map(c => `<option value="${c}">${c}</option>`).join('');
+  document.getElementById('xSelect').innerHTML = opts;
+  document.getElementById('ySelect').innerHTML = opts;
+  if (numCols.length > 1) document.getElementById('ySelect').selectedIndex = 1;
+  updateRegimeView();
+}
+
+function updateRegimeView() {
+  const reg = document.getElementById('regimeFilter').value;
+  const sub = reg === 'Tous' ? processedData : processedData.filter(d => d.Regime === reg);
+  const features = ['CT', 'T_recuit', 'V_galva', 'V_rot', 'CR', 'Th', 'Nb_eff', 'C_eq'].filter(k => sub.some(d => !isNaN(d[k])));
+  document.getElementById('treeRules').innerText = buildDecisionTree(sub, features, 0, 3);
+  updateScatter();
+}
+
+function formatLeaf(arr) {
+  const n = arr.length;
+  const ok = arr.filter(d => d.Statut === 'Conforme').length;
+  const doux = arr.filter(d => d.Statut === 'Rejet Doux (Rp<460)').length;
+  const dur = arr.filter(d => d.Statut === 'Rejet Dur (Rm>610)').length;
+  const pctOk = Math.round((ok / n) * 100);
+  if (pctOk >= 85) return `[FENÊTRE SÛRE] ${n} bobines → ${pctOk}% Conformes`;
+  const cause = dur >= doux ? `Rejet Dur (${Math.round((dur/n)*100)}%)` : `Rejet Doux (${Math.round((doux/n)*100)}%)`;
+  return `[ZONE À RISQUE] ${n} bobines → ${pctOk}% Conformes | Défaut dominant : ${cause}`;
+}
+
+function buildDecisionTree(data, features, depth, maxDepth) {
+  if (data.length < 20 || depth >= maxDepth) return formatLeaf(data);
+
+  const gini = arr => {
+    if (!arr.length) return 0;
+    let sumSq = 0;
+    STATUTS.forEach(c => {
+      const p = arr.filter(d => d.Statut === c).length / arr.length;
+      sumSq += p * p;
+    });
+    return 1 - sumSq;
+  };
+
+  const parentGini = gini(data);
+  if (parentGini < 0.08) return formatLeaf(data);
+
+  let best = { gain: 0, feat: null, thresh: 0, left: [], right: [] };
+
+  features.forEach(f => {
+    const valid = data.filter(d => !isNaN(d[f]));
+    const vals = [...new Set(valid.map(d => d[f]))].sort((a, b) => a - b);
+    for (let i = 1; i < vals.length; i++) {
+      const th = (vals[i-1] + vals[i]) / 2;
+      const left = valid.filter(d => d[f] <= th);
+      const right = valid.filter(d => d[f] > th);
+      if (left.length < 10 || right.length < 10) continue;
+      const weightedGini = (left.length * gini(left) + right.length * gini(right)) / valid.length;
+      const gain = parentGini - weightedGini;
+      if (gain > best.gain) best = { gain, feat: f, thresh: th, left, right };
+    }
+  });
+
+  if (!best.feat || best.gain < 0.01) return formatLeaf(data);
+
+  const indent = "   ".repeat(depth);
+  const leftBranch = buildDecisionTree(best.left, features, depth + 1, maxDepth);
+  const rightBranch = buildDecisionTree(best.right, features, depth + 1, maxDepth);
+
+  return `\n${indent}├─ SI ${best.feat} <= ${best.thresh.toFixed(2)} (${best.left.length} bob.) : ${leftBranch}` +
+         `\n${indent}└─ SI ${best.feat} >  ${best.thresh.toFixed(2)} (${best.right.length} bob.) : ${rightBranch}`;
+}
+
+function updateScatter() {
+  const reg = document.getElementById('regimeFilter').value;
+  const xCol = document.getElementById('xSelect').value;
+  const yCol = document.getElementById('ySelect').value;
+  const sub = reg === 'Tous' ? processedData : processedData.filter(d => d.Regime === reg);
+  const traces = STATUTS.map(st => {
+    const pts = sub.filter(d => d.Statut === st);
+    return {
+      x: pts.map(p => p[xCol]), y: pts.map(p => p[yCol]),
+      text: pts.map(p => `Rp: ${p.Rp} | Rm: ${p.Rm} | Th: ${p.Th}mm`),
+      mode: 'markers', type: 'scatter', name: st,
+      marker: { size: 9, color: COLORS[st], opacity: 0.85 }
+    };
+  });
+  Plotly.newPlot('scatterChart', traces, { xaxis: { title: xCol }, yaxis: { title: yCol }, height: 430, margin: { t: 20 } });
+}
+
+// Régression linéaire multiple par moindres carrés (Gauss-Jordan, ridge léger)
+function fitOLS(data, xCols, yCol) {
+  const n = data.length;
+  const p = xCols.length + 1;
+  if (n <= p + 2) return null;
+
+  const XtX = Array.from({ length: p }, () => Array(p).fill(0));
+  const XtY = Array(p).fill(0);
+
+  data.forEach(row => {
+    const x = [1, ...xCols.map(c => row[c])];
+    const y = row[yCol];
+    for (let i = 0; i < p; i++) {
+      XtY[i] += x[i] * y;
+      for (let j = 0; j < p; j++) XtX[i][j] += x[i] * x[j];
+    }
+  });
+
+  for (let i = 1; i < p; i++) XtX[i][i] += 1e-4;
+
+  const aug = XtX.map((r, i) => [...r, XtY[i]]);
+  for (let i = 0; i < p; i++) {
+    let maxRow = i;
+    for (let k = i + 1; k < p; k++) if (Math.abs(aug[k][i]) > Math.abs(aug[maxRow][i])) maxRow = k;
+    [aug[i], aug[maxRow]] = [aug[maxRow], aug[i]];
+    if (Math.abs(aug[i][i]) < 1e-10) return null;
+    for (let k = i + 1; k < p; k++) {
+      const f = aug[k][i] / aug[i][i];
+      for (let j = i; j <= p; j++) aug[k][j] -= f * aug[i][j];
+    }
+  }
+  const beta = Array(p).fill(0);
+  for (let i = p - 1; i >= 0; i--) {
+    beta[i] = aug[i][p];
+    for (let j = i + 1; j < p; j++) beta[i] -= aug[i][j] * beta[j];
+    beta[i] /= aug[i][i];
+  }
+  return beta;
+}
+
+function predictRow(beta, xCols, row) {
+  return beta[0] + xCols.reduce((a, c, j) => a + beta[j + 1] * row[c], 0);
+}
+
+function fitQuality(data, xCols, yCol, beta) {
+  const mean = data.reduce((a, r) => a + r[yCol], 0) / data.length;
+  let sse = 0, sst = 0;
+  data.forEach(r => {
+    sse += (r[yCol] - predictRow(beta, xCols, r)) ** 2;
+    sst += (r[yCol] - mean) ** 2;
+  });
+  return { r2: sst > 0 ? 1 - sse / sst : 0, rmse: Math.sqrt(sse / data.length) };
+}
+
+// Erreur hors échantillon (validation croisée, 5 blocs)
+function cvRMSE(data, xCols, yCol, k = 5) {
+  let sse = 0, cnt = 0;
+  for (let f = 0; f < k; f++) {
+    const train = data.filter((_, i) => i % k !== f);
+    const test = data.filter((_, i) => i % k === f);
+    const b = fitOLS(train, xCols, yCol);
+    if (!b) return NaN;
+    test.forEach(r => { sse += (r[yCol] - predictRow(b, xCols, r)) ** 2; cnt++; });
+  }
+  return Math.sqrt(sse / cnt);
+}
+
+function normCdf(z) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989423 * Math.exp(-z * z / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return z > 0 ? 1 - p : p;
+}
+
+function simulateOptimalTrecuit() {
+  const out = document.getElementById('simOutput');
+  out.style.display = 'block';
+
+  if (!processedData.length) {
+    out.innerText = "Lancez d'abord l'analyse sur un fichier.";
+    return;
+  }
+
+  const val = id => parseFloat(document.getElementById(id).value);
+  const simInputs = {
+    Th: val('sim_Th'), CR: val('sim_CR'), CT: val('sim_CT'),
+    V_galva: val('sim_V'), C: val('sim_C'), Mn: val('sim_Mn'),
+    Nb: val('sim_Nb'), Ti: val('sim_Ti'), N: val('sim_N')
+  };
+
+  if ([simInputs.Th, simInputs.CR, simInputs.CT].some(isNaN)) {
+    out.innerText = "Renseignez Th, %CR et CT (champs obligatoires).";
+    return;
+  }
+
+  const nbEff = (!isNaN(simInputs.Nb) && !isNaN(simInputs.N) && !isNaN(simInputs.Ti))
+    ? simInputs.Nb - Math.max(0, 6.64 * (simInputs.N - 0.292 * simInputs.Ti)) : NaN;
+  const cEq = (!isNaN(simInputs.C) && !isNaN(simInputs.Mn)) ? simInputs.C + simInputs.Mn / 6.0 : NaN;
+  simInputs.Nb_eff = nbEff;
+  simInputs.C_eq = cEq;
+
+  // Calibration sur le régime de la bobine (repli : toutes les données)
+  const targetRegime = getRegime(simInputs.Th, simInputs.CR);
+  let pool = processedData.filter(d => d.Regime === targetRegime);
+  if (pool.length < 30) pool = processedData;
+
+  // Variables utilisables : renseignées en entrée ET couvertes à ≥ 80 % dans l'historique
+  const candidates = ['T_recuit', 'CT', 'CR', 'Th', 'V_galva', 'Nb_eff', 'C_eq'];
+  const features = candidates.filter(f => {
+    if (f !== 'T_recuit' && f !== 'V_galva' && isNaN(simInputs[f])) return false;
+    return pool.filter(d => !isNaN(d[f])).length >= 0.8 * pool.length;
+  });
+  const trainSet = pool.filter(d => features.every(f => !isNaN(d[f])));
+
+  const betaRp = fitOLS(trainSet, features, 'Rp');
+  const betaRm = fitOLS(trainSet, features, 'Rm');
+
+  if (!betaRp || !betaRm) {
+    out.innerText = "Données insuffisantes pour calibrer les équations prédictives.";
+    return;
+  }
+
+  const qRp = fitQuality(trainSet, features, 'Rp', betaRp);
+  const qRm = fitQuality(trainSet, features, 'Rm', betaRm);
+  const sRp = cvRMSE(trainSet, features, 'Rp') || qRp.rmse;
+  const sRm = cvRMSE(trainSet, features, 'Rm') || qRm.rmse;
+
+  // Plage explorée = 5e à 95e centile de T_recuit observé (pas d'extrapolation)
+  const ts = trainSet.map(d => d.T_recuit).sort((a, b) => a - b);
+  const tMin = Math.floor(ts[Math.floor(0.05 * (ts.length - 1))]);
+  const tMax = Math.ceil(ts[Math.ceil(0.95 * (ts.length - 1))]);
+
+  // Vitesse galva : fixe si saisie, sinon optimisée sur 5e–95e centile observé
+  const useV = features.includes('V_galva');
+  const vFixed = useV && !isNaN(simInputs.V_galva);
+  let vGrid = [NaN], vMin = NaN, vMax = NaN;
+  if (useV && !vFixed) {
+    const vs = trainSet.map(d => d.V_galva).sort((a, b) => a - b);
+    vMin = vs[Math.floor(0.05 * (vs.length - 1))];
+    vMax = vs[Math.ceil(0.95 * (vs.length - 1))];
+    vGrid = [];
+    for (let i = 0; i <= 20; i++) vGrid.push(vMin + (vMax - vMin) * i / 20);
+  } else if (vFixed) vGrid = [simInputs.V_galva];
+
+  const grid = [];
+  for (let t = tMin; t <= tMax; t++) for (const v of vGrid) {
+    const row = { ...simInputs, T_recuit: t, V_galva: v };
+    const predRp = predictRow(betaRp, features, row);
+    const predRm = predictRow(betaRm, features, row);
+    const pRp = 1 - normCdf((460 - predRp) / sRp);
+    const pRm = normCdf((610 - predRm) / sRm);
+    // Borne basse (Fréchet) : prudente, car Rp et Rm sont corrélés
+    grid.push({ t, v, predRp, predRm, pOk: Math.max(0, pRp + pRm - 1) });
+  }
+
+  const maxP = Math.max(...grid.map(g => g.pOk));
+  const plateau = grid.filter(g => g.pOk >= maxP - 0.005);
+  const tMid = (tMin + tMax) / 2;
+  const best = plateau.reduce((a, b) => {
+    const da = Math.abs(a.t - tMid) + (vGrid.length > 1 ? Math.abs(a.v - (vMin + vMax) / 2) / (vMax - vMin) * (tMax - tMin) : 0);
+    const db = Math.abs(b.t - tMid) + (vGrid.length > 1 ? Math.abs(b.v - (vMin + vMax) / 2) / (vMax - vMin) * (tMax - tMin) : 0);
+    return db < da ? b : a;
+  });
+  const okRange = grid.filter(g => g.pOk >= 0.95);
+
+  let txt = `Régime détecté : ${targetRegime} (calibré sur ${trainSet.length} essais)\n`;
+  txt += `Variables actives : ${features.join(', ')}\n`;
+  if (!isNaN(nbEff) || !isNaN(cEq)) {
+    txt += `Indices calculés  : ${!isNaN(nbEff) ? 'Nb_eff = ' + nbEff.toFixed(4) + '% ' : ''}${!isNaN(cEq) ? '| C_eq = ' + cEq.toFixed(3) + '%' : ''}\n`;
+  }
+  txt += `Qualité modèle : Rp R²=${qRp.r2.toFixed(2)} (±${sRp.toFixed(1)} MPa hors échantillon) | Rm R²=${qRm.r2.toFixed(2)} (±${sRm.toFixed(1)} MPa)\n`;
+  txt += `Plage T_recuit explorée (historique) : ${tMin}–${tMax} °C\n`;
+  txt += `${'-'.repeat(66)}\n`;
+  if (vGrid.length > 1) txt += `Plage vitesse galva explorée : ${vMin.toFixed(0)}–${vMax.toFixed(0)}\n`;
+  txt += `CONSIGNE T_recuit = ${best.t} °C${vGrid.length > 1 ? ' | VITESSE GALVA recommandée = ' + best.v.toFixed(0) : (vFixed ? ' (vitesse fixée à ' + simInputs.V_galva + ')' : '')} → Rp prévu ${best.predRp.toFixed(1)} MPa | Rm prévu ${best.predRm.toFixed(1)} MPa\n`;
+  txt += `Probabilité de conformité (borne basse) : ${(best.pOk * 100).toFixed(0)} %\n`;
+  if (okRange.length) {
+    const ots = okRange.map(g => g.t);
+    txt += `Plage T à ≥ 95 % : ${Math.min(...ots)} – ${Math.max(...ots)} °C\n`;
+    if (vGrid.length > 1) { const ovs = okRange.map(g => g.v); txt += `Plage vitesse à ≥ 95 % : ${Math.min(...ovs).toFixed(0)} – ${Math.max(...ovs).toFixed(0)}\n`; }
+  }
+  else txt += `⚠️ Aucune température de la plage n'atteint 95 % : bobine à risque.\n`;
+  if (best.t === tMin || best.t === tMax || (vGrid.length > 1 && (best.v === vMin || best.v === vMax))) txt += `⚠️ Optimum en bord de plage observée : extrapolation, à valider côté procédé.\n`;
+  if (qRp.r2 < 0.3 || qRm.r2 < 0.3) txt += `⚠️ Modèle peu explicatif (R² < 0.3) : consigne indicative seulement.\n`;
+  out.innerText = txt;
+}
+
+function populateCoilSelector() {
+  const sel = document.getElementById('sim_CoilSelect');
+  if (!sel) return;
+  const uniqueCoils = [...new Set(processedData.map(d => d.CoilID).filter(Boolean))];
+  sel.innerHTML = '<option value="">-- Saisie manuelle --</option>' +
+    uniqueCoils.map(c => `<option value="${c}">${c}</option>`).join('');
+}
+
+function fillSimulatorFromCoil() {
+  const id = document.getElementById('sim_CoilSelect').value;
+  if (!id) return;
+  const row = processedData.find(d => d.CoilID === id);
+  if (!row) return;
+  const set = (el, v) => { if (!isNaN(v)) document.getElementById(el).value = v; };
+  set('sim_Th', row.Th); set('sim_CR', row.CR); set('sim_CT', row.CT);
+  set('sim_C', row.C); set('sim_Mn', row.Mn);
+  set('sim_Nb', row.Nb); set('sim_Ti', row.Ti); set('sim_N', row.N);
+  simulateOptimalTrecuit();
+}
+</script>
+</body>
+</html>
