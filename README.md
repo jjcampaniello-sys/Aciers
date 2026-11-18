@@ -2,7 +2,7 @@
 
 Application web autonome (PWA) d'analyse métallurgique et d'aide au réglage pour les lignes de galvanisation continue (grade cible type **CR460LA-GI**). 
 
-Elle permet d'analyser l'historique de production (laminage à chaud, laminage à froid, chimie de coulée et recuit continu) afin de **réduire le taux de rejet mécanique sous 5 %** ($R_p \ge 460\,\text{MPa}$ et $R_m \le 610\,\text{MPa}$).
+Elle permet d'analyser l'historique de production (laminage à chaud, laminage à froid, chimie de coulée et recuit continu) afin de **réduire le taux de rejet mécanique sous 5 %** ($R_p \ge 460\,\text{MPa}$ et $R_m \le 680\,\text{MPa}$).
 
 ---
 
