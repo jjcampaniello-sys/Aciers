@@ -108,6 +108,7 @@
         <div><label>Épaisseur finale Th (mm) * :</label><input type="number" id="sim_Th" step="0.01" value="1.55" /></div>
         <div><label>Réduction à froid %CR * :</label><input type="number" id="sim_CR" step="0.1" value="56.5" /></div>
         <div><label>Temp. Bobinage réel CT (°C) * :</label><input type="number" id="sim_CT" step="1" value="555" /></div>
+        <div><label>Vitesse refroidissement ROT (°C/s) :</label><input type="number" id="sim_Vrot" step="0.1" placeholder="ex: 75" /></div>
         <div><label>Vitesse galva (vide = recommandée) :</label><input type="number" id="sim_V" step="1" placeholder="ex: 100" /></div>
         <div><label>Carbone C wt% (opt.) :</label><input type="number" id="sim_C" step="0.001" placeholder="ex: 0.072" /></div>
         <div><label>Manganèse Mn wt% (opt.) :</label><input type="number" id="sim_Mn" step="0.01" placeholder="ex: 1.50" /></div>
@@ -234,16 +235,17 @@ function runAnalysis() {
     else item.Statut = 'Conforme';
 
     if (!isNaN(item.Nb) && !isNaN(item.N) && !isNaN(item.Ti)) item.Nb_eff = item.Nb - Math.max(0, 6.64 * (item.N - 0.292 * item.Ti));
-    if (!isNaN(item.C) && !isNaN(item.Mn)) item.C_eq = item.C + item.Mn / 6.0;
-
+        if (!isNaN(item.C) && !isNaN(item.Mn)) item.C_eq = item.C + item.Mn / 6.0;
+    if (!isNaN(item.V_rot) && !isNaN(item.CT) && item.CT > 400) {
+      item.Potentiel_HSM = +(item.V_rot / (item.CT - 400)).toFixed(4);
+    }
     item.Regime = getRegime(item.Th, item.CR);
+
     processedData.push(item);
   });
   allProcessedData = [...processedData];
   applyDirectionFilter();
-  if (document.getElementById('simOutput').style.display === 'block') {
-  simulateOptimalTrecuit();
-}
+ 
 }
 
 function applyDirectionFilter() {
@@ -266,6 +268,9 @@ function applyDirectionFilter() {
   drawBarChart();
   setupRegimeControls();
   populateCoilSelector();
+   if (document.getElementById('simOutput').style.display === 'block') {
+  simulateOptimalTrecuit();
+}
 }
 
 function drawBarChart() {
@@ -282,7 +287,8 @@ function setupRegimeControls() {
   const regimes = ['Tous', ...new Set(processedData.map(d => d.Regime))];
   document.getElementById('regimeFilter').innerHTML = regimes.map(r => `<option value="${r}">${r}</option>`).join('');
 
-  const numCols = ['CT', 'T_recuit', 'V_galva', 'V_rot', 'CR', 'Th', 'Nb_eff', 'C_eq'].filter(k => processedData.some(d => !isNaN(d[k])));
+    const numCols = ['CT', 'T_recuit', 'V_galva', 'V_rot', 'Potentiel_HSM', 'CR', 'Th', 'Nb_eff', 'C_eq'].filter(k => processedData.some(d => !isNaN(d[k])));
+
   const opts = numCols.map(c => `<option value="${c}">${c}</option>`).join('');
   document.getElementById('xSelect').innerHTML = opts;
   document.getElementById('ySelect').innerHTML = opts;
@@ -293,7 +299,8 @@ function setupRegimeControls() {
 function updateRegimeView() {
   const reg = document.getElementById('regimeFilter').value;
   const sub = reg === 'Tous' ? processedData : processedData.filter(d => d.Regime === reg);
-  const features = ['CT', 'T_recuit', 'V_galva', 'V_rot', 'CR', 'Th', 'Nb_eff', 'C_eq'].filter(k => sub.some(d => !isNaN(d[k])));
+    const features = ['CT', 'T_recuit', 'V_galva', 'V_rot', 'Potentiel_HSM', 'CR', 'Th', 'Nb_eff', 'C_eq'].filter(k => sub.some(d => !isNaN(d[k])));
+
   document.getElementById('treeRules').innerText = buildDecisionTree(sub, features, 0, 3);
   updateScatter();
 }
@@ -461,7 +468,7 @@ function simulateOptimalTrecuit() {
   const val = id => parseFloat(document.getElementById(id).value);
   const simInputs = {
     Th: val('sim_Th'), CR: val('sim_CR'), CT: val('sim_CT'),
-    V_galva: val('sim_V'), C: val('sim_C'), Mn: val('sim_Mn'),
+    V_rot: val('sim_Vrot'), V_galva: val('sim_V'), C: val('sim_C'), Mn: val('sim_Mn'),
     Nb: val('sim_Nb'), Ti: val('sim_Ti'), N: val('sim_N')
   };
 
@@ -475,14 +482,19 @@ function simulateOptimalTrecuit() {
   const cEq = (!isNaN(simInputs.C) && !isNaN(simInputs.Mn)) ? simInputs.C + simInputs.Mn / 6.0 : NaN;
   simInputs.Nb_eff = nbEff;
   simInputs.C_eq = cEq;
+  const potHsm = (!isNaN(simInputs.V_rot) && !isNaN(simInputs.CT) && simInputs.CT > 400)
+    ? simInputs.V_rot / (simInputs.CT - 400) : NaN;
+  simInputs.Potentiel_HSM = potHsm;
 
+  
   // Calibration sur le régime de la bobine (repli : toutes les données)
   const targetRegime = getRegime(simInputs.Th, simInputs.CR);
   let pool = processedData.filter(d => d.Regime === targetRegime);
   if (pool.length < 30) pool = processedData;
 
   // Variables utilisables : renseignées en entrée ET couvertes à ≥ 80 % dans l'historique
-  const candidates = ['T_recuit', 'CT', 'CR', 'Th', 'V_galva', 'Nb_eff', 'C_eq'];
+    const candidates = ['T_recuit', 'CT', 'V_rot', 'Potentiel_HSM', 'CR', 'Th', 'V_galva', 'Nb_eff', 'C_eq'];
+
   const features = candidates.filter(f => {
     if (f !== 'T_recuit' && f !== 'V_galva' && isNaN(simInputs[f])) return false;
     return pool.filter(d => !isNaN(d[f])).length >= 0.8 * pool.length;
@@ -542,9 +554,10 @@ function simulateOptimalTrecuit() {
 
   let txt = `Régime détecté : ${targetRegime} (calibré sur ${trainSet.length} essais)\n`;
   txt += `Variables actives : ${features.join(', ')}\n`;
-  if (!isNaN(nbEff) || !isNaN(cEq)) {
-    txt += `Indices calculés  : ${!isNaN(nbEff) ? 'Nb_eff = ' + nbEff.toFixed(4) + '% ' : ''}${!isNaN(cEq) ? '| C_eq = ' + cEq.toFixed(3) + '%' : ''}\n`;
+    if (!isNaN(nbEff) || !isNaN(cEq) || !isNaN(potHsm)) {
+    txt += `Indices calculés  : ${!isNaN(nbEff) ? 'Nb_eff = ' + nbEff.toFixed(4) + '% ' : ''}${!isNaN(cEq) ? '| C_eq = ' + cEq.toFixed(3) + '% ' : ''}${!isNaN(potHsm) ? '| Potentiel_HSM = ' + potHsm.toFixed(3) : ''}\n`;
   }
+
   txt += `Qualité modèle : Rp R²=${qRp.r2.toFixed(2)} (±${sRp.toFixed(1)} MPa hors échantillon) | Rm R²=${qRm.r2.toFixed(2)} (±${sRm.toFixed(1)} MPa)\n`;
   txt += `Plage T_recuit explorée (historique) : ${tMin}–${tMax} °C\n`;
   txt += `${'-'.repeat(66)}\n`;
@@ -559,6 +572,11 @@ function simulateOptimalTrecuit() {
   else txt += `⚠️ Aucune température de la plage n'atteint 95 % : bobine à risque.\n`;
   if (best.t === tMin || best.t === tMax || (vGrid.length > 1 && (best.v === vMin || best.v === vMax))) txt += `⚠️ Optimum en bord de plage observée : extrapolation, à valider côté procédé.\n`;
   if (qRp.r2 < 0.3 || qRm.r2 < 0.3) txt += `⚠️ Modèle peu explicatif (R² < 0.3) : consigne indicative seulement.\n`;
+    if (!isNaN(potHsm)) {
+    if (potHsm >= 0.45) txt += `⚠️ Potentiel HSM élevé (${potHsm.toFixed(2)}) : fort durcissement Nb attendu — plafonner T_recuit ≤ 763 °C pour éviter un Rejet Dur (Rm > 610).\n`;
+    else if (potHsm <= 0.32) txt += `⚠️ Potentiel HSM faible (${potHsm.toFixed(2)}) : précipitation avancée au bobinage — risque élevé de Rejet Doux (Rp < 460) même à basse T_recuit.\n`;
+  }
+
   out.innerText = txt;
 }
 
@@ -576,7 +594,7 @@ function fillSimulatorFromCoil() {
   const row = processedData.find(d => d.CoilID === id);
   if (!row) return;
 const set = (el, v) => { document.getElementById(el).value = !isNaN(v) ? v : ''; };
-  set('sim_Th', row.Th); set('sim_CR', row.CR); set('sim_CT', row.CT);
+    set('sim_Th', row.Th); set('sim_CR', row.CR); set('sim_CT', row.CT); set('sim_Vrot', row.V_rot);
   set('sim_C', row.C); set('sim_Mn', row.Mn);
   set('sim_Nb', row.Nb); set('sim_Ti', row.Ti); set('sim_N', row.N);
   simulateOptimalTrecuit();
