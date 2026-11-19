@@ -719,7 +719,7 @@ function renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, simInpu
   });
     html += `</tbody></table>
   <div style="font-size: 0.78em; color: #64748b; margin-top: 4px;">
-    🟢 Vert : Conforme (≥55%) &nbsp;|&nbsp; 🟡 Jaune : Conforme mais marge serrée (&lt;55%) &nbsp;|&nbsp; 🔴 Rouge : Hors cible (Rp &lt; 460 ou Rm &gt; 680) &nbsp;|&nbsp; Cadre vert épais : Consigne recommandée.
+      🟢 Vert : Conforme (≥55%) &nbsp;|&nbsp; 🟡 Jaune : Conforme mais marge serrée (&lt;55%) &nbsp;|&nbsp; 🔴 Rouge : Hors cible (Rp &lt; 460, Rm &gt; 680 ou A &le; 15% en L) &nbsp;|&nbsp; Cadre vert épais : Consigne recommandée.
   </div>`;
 
   container.innerHTML = html;
