@@ -55,8 +55,10 @@
     <div class="card grid">
       <div class="kpi"><div>Taux de Rejet Global</div><h2 id="kpiRejet">-</h2><small>Objectif : &lt; 5.0 %</small></div>
       <div class="kpi"><div>Rejets Doux (Rp &lt; 460)</div><h2 id="kpiDoux">-</h2></div>
-      <div class="kpi"><div>Rejets Durs (Rm &gt; 680)</div><h2 id="kpiDur">-</h2></div>
-      <div class="kpi"><div>Doubles Rejets</div><h2 id="kpiDouble">-</h2></div>
+            <div class="kpi"><div>Rejets Durs (Rm &gt; 680)</div><h2 id="kpiDur">-</h2></div>
+      <div class="kpi"><div>Rejets Ductilité (A &le; 15% en L)</div><h2 id="kpiAllong">-</h2></div>
+      <div class="kpi"><div>Rejets Multiples</div><h2 id="kpiDouble">-</h2></div>
+
       <div class="kpi"><div>Bobines analysées</div><h2 id="kpiTotal">-</h2></div>
     </div>
 
@@ -142,8 +144,10 @@ let workbook = null, rawData = [], processedData = [], allProcessedData = [];
 let trackedPoint = null;
 
 const FIELDS = [
+  const FIELDS = [
   { id: 'Rp', label: 'Limite élasticité Rp (MPa) *', req: true },
   { id: 'Rm', label: 'Résistance traction Rm (MPa) *', req: true },
+  { id: 'A', label: 'Allongement A (%) [cible > 15 en L]', req: false },
   { id: 'Th', label: 'Épaisseur finale (mm) *', req: true },
   { id: 'CR', label: 'Réduction à froid %CR *', req: true },
   { id: 'CT', label: 'Temp. Bobinage CT (°C) *', req: true },
@@ -159,8 +163,14 @@ const FIELDS = [
   { id: 'CoilID', label: 'Code Bobine (ROL_IDENT)', req: false }
 ];
 
-const STATUTS = ['Conforme', 'Rejet Doux (Rp<460)', 'Rejet Dur (Rm>680)', 'Double Rejet'];
-const COLORS = { 'Conforme': '#16a34a', 'Rejet Doux (Rp<460)': '#2563eb', 'Rejet Dur (Rm>680)': '#dc2626', 'Double Rejet': '#9333ea' };
+const STATUTS = ['Conforme', 'Rejet Doux (Rp<460)', 'Rejet Dur (Rm>680)', 'Rejet Ductilité (A≤15% en L)', 'Rejet Multiple'];
+const COLORS = {
+  'Conforme': '#16a34a',
+  'Rejet Doux (Rp<460)': '#2563eb',
+  'Rejet Dur (Rm>680)': '#dc2626',
+  'Rejet Ductilité (A≤15% en L)': '#d97706',
+  'Rejet Multiple': '#9333ea'
+};
 
 function getRegime(th, cr) {
   if (th >= 1.4 || cr < 58) return 'Régime A (Fortes ép. / Bas %CR)';
@@ -240,9 +250,15 @@ function runAnalysis() {
 
     if ([item.Rp, item.Rm, item.Th, item.CR, item.CT, item.T_recuit].some(isNaN)) return;
 
-    if (item.Rp < 460 && item.Rm > 680) item.Statut = 'Double Rejet';
-    else if (item.Rp < 460) item.Statut = 'Rejet Doux (Rp<460)';
-    else if (item.Rm > 680) item.Statut = 'Rejet Dur (Rm>680)';
+        const failDoux = item.Rp < 460;
+    const failDur = item.Rm > 680;
+    const failAllong = (item.Dir === 'L') && !isNaN(item.A) && item.A <= 15;
+    const nbFails = (failDoux ? 1 : 0) + (failDur ? 1 : 0) + (failAllong ? 1 : 0);
+
+    if (nbFails > 1) item.Statut = 'Rejet Multiple';
+    else if (failDoux) item.Statut = 'Rejet Doux (Rp<460)';
+    else if (failDur) item.Statut = 'Rejet Dur (Rm>680)';
+    else if (failAllong) item.Statut = 'Rejet Ductilité (A≤15% en L)';
     else item.Statut = 'Conforme';
 
     if (!isNaN(item.Nb) && !isNaN(item.N) && !isNaN(item.Ti)) item.Nb_eff = item.Nb - Math.max(0, 6.64 * (item.N - 0.292 * item.Ti));
@@ -272,8 +288,11 @@ function applyDirectionFilter() {
   document.getElementById('kpiTotal').innerText = total;
   document.getElementById('kpiRejet').innerText = (((total - conf) / total) * 100).toFixed(1) + ' %';
   document.getElementById('kpiDoux').innerText = ((count('Rejet Doux (Rp<460)') / total) * 100).toFixed(1) + ' %';
+    const hasAInL = processedData.some(d => d.Dir === 'L' && !isNaN(d.A));
   document.getElementById('kpiDur').innerText = ((count('Rejet Dur (Rm>680)') / total) * 100).toFixed(1) + ' %';
-  document.getElementById('kpiDouble').innerText = ((count('Double Rejet') / total) * 100).toFixed(1) + ' %';
+  document.getElementById('kpiAllong').innerText = hasAInL ? ((count('Rejet Ductilité (A≤15% en L)') / total) * 100).toFixed(1) + ' %' : 'N/A (Sens L)';
+  document.getElementById('kpiDouble').innerText = ((count('Rejet Multiple') / total) * 100).toFixed(1) + ' %';
+
 
   document.getElementById('resultsSection').classList.remove('hidden');
   drawBarChart();
@@ -298,7 +317,7 @@ function setupRegimeControls() {
   const regimes = ['Tous', ...new Set(processedData.map(d => d.Regime))];
   document.getElementById('regimeFilter').innerHTML = regimes.map(r => `<option value="${r}">${r}</option>`).join('');
 
-    const numCols = ['CT', 'T_recuit', 'V_galva', 'V_rot', 'Potentiel_HSM', 'CR', 'Th', 'Nb_eff', 'C_eq'].filter(k => processedData.some(d => !isNaN(d[k])));
+      const numCols = ['CT', 'T_recuit', 'V_galva', 'V_rot', 'Potentiel_HSM', 'CR', 'Th', 'Nb_eff', 'C_eq', 'A'].filter(k => processedData.some(d => !isNaN(d[k])));
 
   const opts = numCols.map(c => `<option value="${c}">${c}</option>`).join('');
   document.getElementById('xSelect').innerHTML = opts;
@@ -321,18 +340,24 @@ function formatLeaf(arr) {
   const ok = arr.filter(d => d.Statut === 'Conforme').length;
   const doux = arr.filter(d => d.Statut === 'Rejet Doux (Rp<460)').length;
   const dur = arr.filter(d => d.Statut === 'Rejet Dur (Rm>680)').length;
+  const allong = arr.filter(d => d.Statut === 'Rejet Ductilité (A≤15% en L)').length;
+  const mult = arr.filter(d => d.Statut === 'Rejet Multiple').length;
+
   const pctOk = Math.round((ok / n) * 100);
   if (pctOk >= 85) return `[FENÊTRE SÛRE] ${n} bobines → ${pctOk}% Conformes`;
- const dbl = arr.filter(d => d.Statut === 'Double Rejet').length;
-const causes = [
-  { label: `Rejet Dur (${Math.round((dur/n)*100)}%)`, val: dur },
-  { label: `Rejet Doux (${Math.round((doux/n)*100)}%)`, val: doux },
-  { label: `Double Rejet (${Math.round((dbl/n)*100)}%)`, val: dbl }
-].sort((a, b) => b.val - a.val);
-const cause = causes[0].label;
+
+  const causes = [
+    { label: `Rejet Dur (${Math.round((dur/n)*100)}%)`, val: dur },
+    { label: `Rejet Doux (${Math.round((doux/n)*100)}%)`, val: doux },
+    { label: `Rejet Ductilité A≤15% (${Math.round((allong/n)*100)}%)`, val: allong },
+    { label: `Rejet Multiple (${Math.round((mult/n)*100)}%)`, val: mult }
+  ].sort((a, b) => b.val - a.val);
+
+  const cause = causes[0].label;
 
   return `[ZONE À RISQUE] ${n} bobines → ${pctOk}% Conformes | Défaut dominant : ${cause}`;
 }
+
 
 function buildDecisionTree(data, features, depth, maxDepth) {
   if (data.length < 20 || depth >= maxDepth) return formatLeaf(data);
@@ -388,7 +413,7 @@ function updateScatter() {
       x: pts.map(p => p[xCol]),
       y: pts.map(p => p[yCol]),
       customdata: pts,
-      text: pts.map(p => `${p.CoilID ? 'Bobine: ' + p.CoilID + '<br>' : ''}Rp: ${p.Rp} | Rm: ${p.Rm}<br>Th: ${p.Th}mm | CR: ${p.CR}% | CT: ${p.CT}°C`),
+           text: pts.map(p => `${p.CoilID ? 'Bobine: ' + p.CoilID + '<br>' : ''}Rp: ${p.Rp} | Rm: ${p.Rm}${!isNaN(p.A) ? ' | A: ' + p.A + '%' : ''}<br>Th: ${p.Th}mm | CR: ${p.CR}% | CT: ${p.CT}°C`),
       mode: 'markers',
       type: 'scatter',
       name: st,
@@ -550,6 +575,12 @@ function simulateOptimalTrecuit() {
 
   const betaRp = fitOLS(trainSet, features, 'Rp');
   const betaRm = fitOLS(trainSet, features, 'Rm');
+  const currentDir = document.getElementById('dirFilter').value;
+  const trainSetA = trainSet.filter(d => d.Dir === 'L' && !isNaN(d.A));
+  const useA = (currentDir === 'L') && (trainSetA.length >= 20);
+  const betaA = useA ? fitOLS(trainSetA, features, 'A') : null;
+  const qA = (useA && betaA) ? fitQuality(trainSetA, features, 'A', betaA) : null;
+  const sA = (useA && betaA) ? (cvRMSE(trainSetA, features, 'A') || qA.rmse) : NaN;
 
   if (!betaRp || !betaRm) {
     out.innerText = "Données insuffisantes pour calibrer les équations prédictives.";
@@ -581,13 +612,13 @@ function simulateOptimalTrecuit() {
   const grid = [];
   for (let t = tMin; t <= tMax; t++) for (const v of vGrid) {
     const row = { ...simInputs, T_recuit: t, V_galva: v };
-    const predRp = predictRow(betaRp, features, row);
+        const predRp = predictRow(betaRp, features, row);
     const predRm = predictRow(betaRm, features, row);
+    const predA = (useA && betaA) ? predictRow(betaA, features, row) : NaN;
     const pRp = 1 - normCdf((460 - predRp) / sRp);
-    const pRm = normCdf((610 - predRm) / sRm);
-    // Borne basse (Fréchet) : prudente, car Rp et Rm sont corrélés
-       grid.push({ t, v, predRp, predRm, pOk: pRp * pRm });
-
+    const pRm = normCdf((680 - predRm) / sRm);
+    const pA = (useA && betaA) ? (1 - normCdf((15 - predA) / sA)) : 1;
+    grid.push({ t, v, predRp, predRm, predA, pOk: pRp * pRm * pA });
   }
 
   const maxP = Math.max(...grid.map(g => g.pOk));
@@ -606,11 +637,12 @@ function simulateOptimalTrecuit() {
     txt += `Indices calculés  : ${!isNaN(nbEff) ? 'Nb_eff = ' + nbEff.toFixed(4) + '% ' : ''}${!isNaN(cEq) ? '| C_eq = ' + cEq.toFixed(3) + '% ' : ''}${!isNaN(potHsm) ? '| Potentiel_HSM = ' + potHsm.toFixed(3) : ''}\n`;
   }
 
-  txt += `Qualité modèle : Rp R²=${qRp.r2.toFixed(2)} (±${sRp.toFixed(1)} MPa hors échantillon) | Rm R²=${qRm.r2.toFixed(2)} (±${sRm.toFixed(1)} MPa)\n`;
+    txt += `Qualité modèle : Rp R²=${qRp.r2.toFixed(2)} (±${sRp.toFixed(1)} MPa hors échantillon) | Rm R²=${qRm.r2.toFixed(2)} (±${sRm.toFixed(1)} MPa)${(useA && betaA) ? ` | A% (L) R²=${qA.r2.toFixed(2)} (±${sA.toFixed(1)}%)` : ''}\n`;
   txt += `Plage T_recuit explorée (historique) : ${tMin}–${tMax} °C\n`;
   txt += `${'-'.repeat(66)}\n`;
   if (vGrid.length > 1) txt += `Plage vitesse galva explorée : ${vMin.toFixed(0)}–${vMax.toFixed(0)}\n`;
-  txt += `CONSIGNE T_recuit = ${best.t} °C${vGrid.length > 1 ? ' | VITESSE GALVA recommandée = ' + best.v.toFixed(0) : (vFixed ? ' (vitesse fixée à ' + simInputs.V_galva + ')' : '')} → Rp prévu ${best.predRp.toFixed(1)} MPa | Rm prévu ${best.predRm.toFixed(1)} MPa\n`;
+   txt += `CONSIGNE T_recuit = ${best.t} °C${vGrid.length > 1 ? ' | VITESSE GALVA recommandée = ' + best.v.toFixed(0) : (vFixed ? ' (vitesse fixée à ' + simInputs.V_galva + ')' : '')} → Rp prévu ${best.predRp.toFixed(1)} MPa | Rm prévu ${best.predRm.toFixed(1)} MPa${!isNaN(best.predA) ? ' | A prévu ' + best.predA.toFixed(1) + ' %' : ''}\n`;
+
   txt += `Probabilité de conformité (borne basse) : ${(best.pOk * 100).toFixed(0)} %\n`;
   if (okRange.length) {
     const ots = okRange.map(g => g.t);
@@ -633,11 +665,11 @@ function simulateOptimalTrecuit() {
   }
 
   out.innerText = txt;
-  renderSensitivityTable(best.t, best.v, vFixed, vGrid, tMin, tMax, simInputs, features, betaRp, betaRm, sRp, sRm);
+   renderSensitivityTable(best.t, best.v, vFixed, vGrid, tMin, tMax, simInputs, features, betaRp, betaRm, betaA, sRp, sRm, sA);
 }
 
 
-function renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, simInputs, features, betaRp, betaRm, sRp, sRm) {
+function renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, simInputs, features, betaRp, betaRm, betaA, sRp, sRm, sA) {
   const container = document.getElementById('simSensitivityTable');
   if (!container) return;
   const startT = Math.max(Math.round(tMin), Math.min(Math.round(tMax) - 8, Math.round(bestT) - 4));
@@ -667,20 +699,22 @@ function renderSensitivityTable(bestT, bestV, vFixed, vGrid, tMin, tMax, simInpu
     temps.forEach(t => {
       const testObj = { ...simInputs, T_recuit: t };
       if (v !== undefined && v !== null && !isNaN(v)) testObj.V_galva = v;
-      const rp = predictRow(betaRp, features, testObj);
+               const rp = predictRow(betaRp, features, testObj);
       const rm = predictRow(betaRm, features, testObj);
+      const aVal = betaA ? predictRow(betaA, features, testObj) : NaN;
       const pRp = 1 - normCdf((460 - rp) / sRp);
       const pRm = normCdf((680 - rm) / sRm);
-            const prob = Math.round((pRp * pRm) * 100);
-      const isOk = rp >= 460 && rm <= 680;
+      const pA = betaA ? (1 - normCdf((15 - aVal) / sA)) : 1;
+      const prob = Math.round((pRp * pRm * pA) * 100);
+      const isOk = rp >= 460 && rm <= 680 && (!betaA || aVal > 15);
       const bg = !isOk ? '#fee2e2' : (prob >= 55 ? '#dcfce7' : '#fef9c3');
-
       const isBestCell = (t === Math.round(bestT) && (v === undefined || v === null || isNaN(v) || Math.round(v) === Math.round(bestV)));
       const borderOpt = isBestCell ? '3px solid #16a34a' : '1px solid #cbd5e1';
       html += `<td style="padding: 6px; background: ${bg}; border: ${borderOpt};">
-        <div><b>Rp ${rp.toFixed(0)}</b> | Rm ${rm.toFixed(0)}</div>
+        <div><b>Rp ${rp.toFixed(0)}</b> | Rm ${rm.toFixed(0)}${betaA ? ` | <b>A ${aVal.toFixed(1)}%</b>` : ''}</div>
         <div style="font-size: 0.85em; color: #334155;">Conf. : <b>${prob}%</b></div>
       </td>`;
+
     });
     html += `</tr>`;
   });
