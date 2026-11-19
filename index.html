@@ -90,6 +90,11 @@
           <label>Paramètre Axe Y :</label>
           <select id="ySelect" onchange="updateScatter()"></select>
         </div>
+                <div>
+          <label>Point suivi :</label>
+          <button type="button" onclick="trackedPoint = null; updateScatter();" style="background:#64748b; margin-top:4px;">Effacer le repère</button>
+        </div>
+
       </div>
       <h4>Règles critiques détectées automatiquement (Arbre CART) :</h4>
       <div id="treeRules" class="rules-box"></div>
@@ -134,6 +139,7 @@ if ('serviceWorker' in navigator) {
 }
 
 let workbook = null, rawData = [], processedData = [], allProcessedData = [];
+let trackedPoint = null;
 
 const FIELDS = [
   { id: 'Rp', label: 'Limite élasticité Rp (MPa) *', req: true },
@@ -375,17 +381,51 @@ function updateScatter() {
   const xCol = document.getElementById('xSelect').value;
   const yCol = document.getElementById('ySelect').value;
   const sub = reg === 'Tous' ? processedData : processedData.filter(d => d.Regime === reg);
+
   const traces = STATUTS.map(st => {
     const pts = sub.filter(d => d.Statut === st);
     return {
-      x: pts.map(p => p[xCol]), y: pts.map(p => p[yCol]),
-      text: pts.map(p => `Rp: ${p.Rp} | Rm: ${p.Rm} | Th: ${p.Th}mm`),
-      mode: 'markers', type: 'scatter', name: st,
+      x: pts.map(p => p[xCol]),
+      y: pts.map(p => p[yCol]),
+      customdata: pts,
+      text: pts.map(p => `${p.CoilID ? 'Bobine: ' + p.CoilID + '<br>' : ''}Rp: ${p.Rp} | Rm: ${p.Rm}<br>Th: ${p.Th}mm | CR: ${p.CR}% | CT: ${p.CT}°C`),
+      mode: 'markers',
+      type: 'scatter',
+      name: st,
       marker: { size: 9, color: COLORS[st], opacity: 0.85 }
     };
   });
-  Plotly.newPlot('scatterChart', traces, { xaxis: { title: xCol }, yaxis: { title: yCol }, height: 430, margin: { t: 20 } });
+
+  // Si un point est marqué, on ajoute une étoile dorée par-dessus
+  if (trackedPoint && sub.includes(trackedPoint)) {
+    traces.push({
+      x: [trackedPoint[xCol]],
+      y: [trackedPoint[yCol]],
+      text: [`[POINT SUIVI] ${trackedPoint.CoilID || ''}<br>Rp: ${trackedPoint.Rp} | Rm: ${trackedPoint.Rm}`],
+      mode: 'markers',
+      type: 'scatter',
+      name: 'Point suivi',
+      marker: { size: 18, color: '#facc15', symbol: 'star', line: { color: '#000000', width: 2 } }
+    });
+  }
+
+  const chartDiv = document.getElementById('scatterChart');
+  Plotly.newPlot(chartDiv, traces, {
+    xaxis: { title: xCol },
+    yaxis: { title: yCol },
+    height: 430,
+    margin: { t: 20 }
+  });
+
+  // Écouter le clic sur un point pour le marquer
+  chartDiv.on('plotly_click', function(data) {
+    if (data.points && data.points.length > 0 && data.points[0].customdata) {
+      trackedPoint = data.points[0].customdata;
+      updateScatter();
+    }
+  });
 }
+
 
 // Régression linéaire multiple par moindres carrés (Gauss-Jordan, ridge léger)
 function fitOLS(data, xCols, yCol) {
