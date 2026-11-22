@@ -44,6 +44,8 @@ td,th{padding:6px;border:1px solid #cbd5e1}
     <div><label>Épaisseur forte si Th ≥ (mm) :</label><input type="number" id="c_hi" step="0.05" value="1.4"></div>
     <div><label>CART : bobines min / feuille :</label><input type="number" id="c_leaf" value="15"></div>
     <div><label>CART : profondeur max :</label><input type="number" id="c_depth" value="3"></div>
+    <div><label>HSM bas (vide = auto, P20 du régime) :</label><input type="number" id="c_hlo" step="0.01"></div>
+    <div><label>HSM haut (vide = auto, P80 du régime) :</label><input type="number" id="c_hhi" step="0.01"></div>
   </div>
 </div>
 
@@ -143,7 +145,8 @@ function runAnalysis() {
   for (const f of FIELDS.filter(x => x.req)) if (!$('map_'+f.id).value) return alert('Colonne obligatoire : ' + f.label);
   try { const m = {}; FIELDS.forEach(f => m[f.id] = $('map_'+f.id).value); localStorage.setItem('hsla_mapping', JSON.stringify(m)); } catch(e) {}
   C = {rp:+$('c_rp').value, rm:+$('c_rm').value, a:+$('c_a').value, lo:+$('c_lo').value, hi:+$('c_hi').value,
-       dir:$('c_dir').value, leaf:Math.max(5,+$('c_leaf').value||15), depth:+$('c_depth').value||3};
+       dir:$('c_dir').value, leaf:Math.max(5,+$('c_leaf').value||15), depth:+$('c_depth').value||3,
+       hlo:parseFloat($('c_hlo').value), hhi:parseFloat($('c_hhi').value)};
   const dirMapped = !!$('map_Dir').value;
   all = [];
   raw.forEach(row => {
@@ -370,7 +373,18 @@ function simulate() {
   else t += `⚠️ Aucun point à 95 % : bobine à risque.\n`;
   if (best.t === tMin || best.t === tMax || (vGrid.length > 1 && (best.v === vMin || best.v === vMax))) t += `⚠️ Optimum en bord de plage historique : à valider côté procédé.\n`;
   if (r2.some(x => x < .3)) t += `⚠️ R² < 0.3 : consigne indicative seulement.\n`;
-  const outside = ['Th','CR','CT','V_rot','Nb_eff','C_eq','Potentiel_HSM'].filter(c => !isNaN(inp[c])).filter(c => {
+  if (!isNaN(inp.Potentiel_HSM)) {
+    const hv = pool.map(d => d.Potentiel_HSM).filter(x => !isNaN(x));
+    if (hv.length >= 20) {
+      const lo = isNaN(C.hlo) ? quant(hv, .2) : C.hlo, hi = isNaN(C.hhi) ? quant(hv, .8) : C.hhi;
+      const pct = Math.round(hv.filter(x => x <= inp.Potentiel_HSM).length / hv.length * 100);
+      t += `ℹ️ Potentiel HSM = ${inp.Potentiel_HSM.toFixed(3)} (percentile ${pct} du régime ${reg} ; seuils ${lo.toFixed(2)} / ${hi.toFixed(2)}${isNaN(C.hlo) && isNaN(C.hhi) ? ' auto' : ''}) : `;
+      if (inp.Potentiel_HSM >= hi) t += `élevé → fort durcissement par précipitation Nb attendu, surveiller Rm haut si T_recuit bas ou vitesse élevée.\n`;
+      else if (inp.Potentiel_HSM <= lo) t += `faible → précipitation avancée au bobinage, risque accru de Rp bas : privilégier T_recuit basse / vitesse haute dans la plage.\n`;
+      else t += `intermédiaire.\n`;
+    } else t += `ℹ️ Potentiel HSM = ${inp.Potentiel_HSM.toFixed(3)} (pas assez d'historique pour situer).\n`;
+  }
+  const outside = ['Th','CR','CT','V_rot','Nb_eff','C_eq'].filter(c => !isNaN(inp[c])).filter(c => {
     const a = pool.map(d => d[c]).filter(x => !isNaN(x)); return a.length > 20 && (inp[c] < quant(a, .025) || inp[c] > quant(a, .975));
   });
   if (outside.length) t += `⚠️ Hors plage historique (2,5–97,5 %) : ${outside.join(', ')} → extrapolation.\n`;
