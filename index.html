@@ -46,6 +46,7 @@ td,th{padding:6px;border:1px solid #cbd5e1}
     <div><label>CART : profondeur max :</label><input type="number" id="c_depth" value="3"></div>
     <div><label>HSM bas (vide = auto, P20 du régime) :</label><input type="number" id="c_hlo" step="0.01"></div>
     <div><label>HSM haut (vide = auto, P80 du régime) :</label><input type="number" id="c_hhi" step="0.01"></div>
+    <div><label><input type="checkbox" id="c_single" checked style="width:auto"> Régime unique (épaisseur = variable)</label></div>
   </div>
 </div>
 
@@ -88,6 +89,8 @@ td,th{padding:6px;border:1px solid #cbd5e1}
       <div><label>Nb wt% :</label><input type="number" id="s_Nb" step="0.001"></div>
       <div><label>Ti wt% :</label><input type="number" id="s_Ti" step="0.001"></div>
       <div><label>N wt% :</label><input type="number" id="s_N" step="0.0001"></div>
+      <div><label>Position sur coil mère (LENGTH_POS_MOTHER) :</label><input type="number" id="s_Pos" step="1"></div>
+<div><label>Temp. laminage à chaud (TEMP_START_F7) :</label><input type="number" id="s_TF7" step="1"></div>
     </div>
     <button onclick="simulate()" style="background:#16a34a">Calculer la consigne</button>
     <div id="simOut" class="box" style="margin-top:15px;display:none"></div>
@@ -105,15 +108,14 @@ const FIELDS = [
   {id:'Rp',label:'Rp (MPa) *',req:1},{id:'Rm',label:'Rm (MPa) *',req:1},{id:'A',label:'Allongement A (%)'},
   {id:'Th',label:'Épaisseur finale (mm) *',req:1},{id:'CR',label:'%CR *',req:1},{id:'CT',label:'Bobinage CT (°C) *',req:1},
   {id:'T_recuit',label:'T recuit galva (°C) *',req:1},{id:'V_galva',label:'Vitesse ligne recuit *',req:1},
-  {id:'V_rot',label:'Vitesse ROT'},{id:'Nb',label:'Nb (wt%)'},{id:'Ti',label:'Ti (wt%)'},{id:'N',label:'N (wt%)'},
-  {id:'C',label:'C (wt%)'},{id:'Mn',label:'Mn (wt%)'},{id:'Dir',label:'Direction essai'},{id:'CoilID',label:'Code bobine (idéalement unique par bobine)'}
-];
+  {id:'V_rot',label:'Vitesse ROT'},{id:'Nb',label:'Nb (wt%)'},{id:'Ti',label:'Ti (wt%)'},{id:'N',label:'N (wt%)'},{id:'CoilID',label:'Code bobine (idéalement unique par bobine)'},
+  {id:'Pos',label:'Position sur coil mère (LENGTH_POS_MOTHER)'},{id:'TF7',label:'Temp. laminage à chaud (TEMP_START_F7)'}
+  ]
 const ST = {OK:'Conforme',DOUX:'Rejet Doux',DUR:'Rejet Dur',DUCT:'Rejet Ductilité',MULT:'Rejet Multiple'};
 const STL = Object.values(ST);
 const COL = {'Conforme':'#16a34a','Rejet Doux':'#2563eb','Rejet Dur':'#dc2626','Rejet Ductilité':'#d97706','Rejet Multiple':'#9333ea'};
-const REGS = ['Faible','Moyenne','Épaisse'];
-const regime = th => th <= C.lo ? 'Faible' : th >= C.hi ? 'Épaisse' : 'Moyenne';
-
+const REGS = ['Faible','Moyenne','Épaisse','Tous'];
+const regime = th => C.single ? 'Tous' : th <= C.lo ? 'Faible' : th >= C.hi ? 'Épaisse' : 'Moyenne';
 $('fileInput').addEventListener('change', e => {
   const file = e.target.files[0]; if (!file) return;
   const r = new FileReader();
@@ -146,7 +148,7 @@ function runAnalysis() {
   try { const m = {}; FIELDS.forEach(f => m[f.id] = $('map_'+f.id).value); localStorage.setItem('hsla_mapping', JSON.stringify(m)); } catch(e) {}
   C = {rp:+$('c_rp').value, rm:+$('c_rm').value, a:+$('c_a').value, lo:+$('c_lo').value, hi:+$('c_hi').value,
        dir:$('c_dir').value, leaf:Math.max(5,+$('c_leaf').value||15), depth:+$('c_depth').value||3,
-       hlo:parseFloat($('c_hlo').value), hhi:parseFloat($('c_hhi').value)};
+       hlo:parseFloat($('c_hlo').value), hhi:parseFloat($('c_hhi').value), single:$('c_single').checked};
   const dirMapped = !!$('map_Dir').value;
   all = [];
   raw.forEach(row => {
@@ -183,7 +185,7 @@ function render() {
   $('results').classList.remove('hidden');
   const regs = REGS.filter(r => data.some(d => d.Regime === r));
   Plotly.newPlot('barChart', STL.map(s => ({x:regs, y:regs.map(r => data.filter(d => d.Regime === r && d.Statut === s).length), name:s, type:'bar', marker:{color:COL[s]}})), {barmode:'group', height:320, margin:{t:20}});
-  $('regimeFilter').innerHTML = ['Tous', ...regs].map(r => `<option>${r}</option>`).join('');
+  $('regimeFilter').innerHTML = ['Tous', ...regs.filter(r => r !== 'Tous')].map(r => `<option>${r}</option>`).join('');
   const nc = ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','A'].filter(k => data.some(d => !isNaN(d[k])));
   $('xSel').innerHTML = $('ySel').innerHTML = nc.map(c => `<option>${c}</option>`).join('');
   if (nc.length > 1) $('ySel').selectedIndex = 1;
@@ -314,7 +316,7 @@ function simulate() {
   const out = $('simOut'); out.style.display = 'block'; $('simTab').innerHTML = '';
   if (!data.length) { out.innerText = "Lancez d'abord l'analyse."; return; }
   const v = id => parseFloat($(id).value);
-  const inp = {Th:v('s_Th'), CR:v('s_CR'), CT:v('s_CT'), V_rot:v('s_Vrot'), V_galva:v('s_V'), C:v('s_C'), Mn:v('s_Mn'), Nb:v('s_Nb'), Ti:v('s_Ti'), N:v('s_N')};
+  const inp = {Th:v('s_Th'), CR:v('s_CR'), CT:v('s_CT'), V_rot:v('s_Vrot'), V_galva:v('s_V'), C:v('s_C'), Mn:v('s_Mn'), Nb:v('s_Nb'), Ti:v('s_Ti'), N:v('s_N'), Pos:v('s_Pos'), TF7:v('s_TF7')};
   if ([inp.Th, inp.CR, inp.CT].some(isNaN)) { out.innerText = 'Renseignez Th, %CR et CT.'; return; }
   inp.Nb_eff = ![inp.Nb,inp.N,inp.Ti].some(isNaN) ? inp.Nb - Math.max(0, 6.64*(inp.N - 0.292*inp.Ti)) : NaN;
   inp.C_eq = ![inp.C,inp.Mn].some(isNaN) ? inp.C + inp.Mn/6 : NaN;
@@ -324,7 +326,7 @@ function simulate() {
   let pool = data.filter(d => d.Regime === reg), note = '';
   if (pool.length < 40) { pool = data; note = `⚠️ Régime ${reg} : < 40 essais, calibration sur toutes les épaisseurs.\n`; }
   const cov = c => pool.filter(d => !isNaN(d[c])).length / pool.length;
-  const f = ['T_recuit','V_galva','CT','V_rot','CR','Th','Nb_eff','C_eq'].filter(c => c === 'T_recuit' || c === 'V_galva' ? cov(c) >= .8 : !isNaN(inp[c]) && cov(c) >= .8);
+  const f = ['T_recuit','V_galva','CT','V_rot','CR','Th','Nb_eff','C_eq','Pos','TF7'].filter(c => c === 'T_recuit' || c === 'V_galva' ? cov(c) >= .8 : !isNaN(inp[c]) && cov(c) >= .8);
   let tr = pool.filter(d => f.every(c => !isNaN(d[c])));
   let useA = C.hasA;
   if (useA) { const t2 = tr.filter(d => !isNaN(d.A)); if (t2.length >= 30 && t2.length >= .5*tr.length) tr = t2; else useA = false; }
@@ -412,7 +414,7 @@ function fillFromCoil() {
   const r = data.find(d => d.CoilID === $('coilSel').value); if (!r) return;
   const set = (id, x) => $(id).value = isNaN(x) ? '' : x;
   set('s_Th', r.Th); set('s_CR', r.CR); set('s_CT', r.CT); set('s_Vrot', r.V_rot); set('s_V', NaN);
-  set('s_C', r.C); set('s_Mn', r.Mn); set('s_Nb', r.Nb); set('s_Ti', r.Ti); set('s_N', r.N);
+  set('s_C', r.C); set('s_Mn', r.Mn); set('s_Nb', r.Nb); set('s_Ti', r.Ti); set('s_N', r.N); set('s_Pos', r.Pos); set('s_TF7', r.TF7);
   simulate();
 }
 </script>
