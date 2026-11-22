@@ -108,9 +108,10 @@ const FIELDS = [
   {id:'Rp',label:'Rp (MPa) *',req:1},{id:'Rm',label:'Rm (MPa) *',req:1},{id:'A',label:'Allongement A (%)'},
   {id:'Th',label:'Épaisseur finale (mm) *',req:1},{id:'CR',label:'%CR *',req:1},{id:'CT',label:'Bobinage CT (°C) *',req:1},
   {id:'T_recuit',label:'T recuit galva (°C) *',req:1},{id:'V_galva',label:'Vitesse ligne recuit *',req:1},
-  {id:'V_rot',label:'Vitesse ROT'},{id:'Nb',label:'Nb (wt%)'},{id:'Ti',label:'Ti (wt%)'},{id:'N',label:'N (wt%)'},{id:'CoilID',label:'Code bobine (idéalement unique par bobine)'},
+    {id:'V_rot',label:'Vitesse ROT'},{id:'Nb',label:'Nb (wt%)'},{id:'Ti',label:'Ti (wt%)'},{id:'N',label:'N (wt%)'},
+  {id:'C',label:'C (wt%)'},{id:'Mn',label:'Mn (wt%)'},{id:'Dir',label:'Direction essai'},{id:'CoilID',label:'Code bobine (idéalement unique par bobine)'},
   {id:'Pos',label:'Position sur coil mère (LENGTH_POS_MOTHER)'},{id:'TF7',label:'Temp. laminage à chaud (TEMP_START_F7)'}
-  ]
+];
 const ST = {OK:'Conforme',DOUX:'Rejet Doux',DUR:'Rejet Dur',DUCT:'Rejet Ductilité',MULT:'Rejet Multiple'};
 const STL = Object.values(ST);
 const COL = {'Conforme':'#16a34a','Rejet Doux':'#2563eb','Rejet Dur':'#dc2626','Rejet Ductilité':'#d97706','Rejet Multiple':'#9333ea'};
@@ -186,7 +187,8 @@ function render() {
   const regs = REGS.filter(r => data.some(d => d.Regime === r));
   Plotly.newPlot('barChart', STL.map(s => ({x:regs, y:regs.map(r => data.filter(d => d.Regime === r && d.Statut === s).length), name:s, type:'bar', marker:{color:COL[s]}})), {barmode:'group', height:320, margin:{t:20}});
   $('regimeFilter').innerHTML = ['Tous', ...regs.filter(r => r !== 'Tous')].map(r => `<option>${r}</option>`).join('');
-  const nc = ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','A'].filter(k => data.some(d => !isNaN(d[k])));
+  const nc = ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','Pos','TF7','A'].filter(k => data.some(d => !isNaN(d[k])));
+  
   $('xSel').innerHTML = $('ySel').innerHTML = nc.map(c => `<option>${c}</option>`).join('');
   if (nc.length > 1) $('ySel').selectedIndex = 1;
   const ids = [...new Set(data.map(d => d.CoilID).filter(Boolean))];
@@ -198,7 +200,7 @@ const sub = () => { const r = $('regimeFilter').value; return r === 'Tous' ? dat
 
 function updateRegime() {
   const rows = sub();
-  const feats = ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq'].filter(k => rows.filter(d => !isNaN(d[k])).length >= 0.8 * rows.length);
+  const feats = ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','Pos','TF7'].filter(k => rows.filter(d => !isNaN(d[k])).length >= 0.8 * rows.length);
   const cc = rows.filter(d => feats.every(k => !isNaN(d[k])));
   $('treeRules').innerText = `Variables : ${feats.join(', ')} | ${cc.length}/${rows.length} bobines complètes utilisées\n` +
     (cc.length < 2 * C.leaf ? formatLeaf(cc.length ? cc : rows) : cart(cc, feats, 0));
