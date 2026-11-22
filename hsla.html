@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HSLA - Fenêtre Procédé</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.plot.ly; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; form-action 'none';">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+body{font-family:system-ui,sans-serif;margin:20px;background:#f4f6f9;color:#1f2937}
+.container{max-width:1200px;margin:auto}
+.card{background:#fff;padding:20px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.1);margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+select,input,button{width:100%;padding:8px;margin-top:4px;border:1px solid #cbd5e1;border-radius:5px;box-sizing:border-box}
+button{background:#2563eb;color:#fff;font-weight:600;border:none;cursor:pointer;margin-top:15px}
+.kpi{text-align:center;padding:12px;background:#eff6ff;border-radius:6px;border:1px solid #bfdbfe}
+.kpi h2{margin:4px 0;color:#1e40af}
+.box{background:#1e293b;color:#f8fafc;padding:15px;border-radius:6px;font-family:monospace;white-space:pre-wrap;line-height:1.5;overflow-x:auto}
+.hidden{display:none}
+table{width:100%;border-collapse:collapse;font-size:.85em;text-align:center}
+td,th{padding:6px;border:1px solid #cbd5e1}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>Analyse métallurgique &amp; réglage recuit (HSLA)</h1>
+
+<div class="card">
+  <h3>1. Fichier et critères</h3>
+  <input type="file" id="fileInput" accept=".xlsm,.xlsx,.xls,.csv" />
+  <div id="sheetControls" class="grid hidden" style="margin-top:12px">
+    <div><label>Onglet :</label><select id="sheetSelect"></select></div>
+    <div><label>Ligne des en-têtes :</label><input type="number" id="headerRow" value="1" min="1" max="30"></div>
+    <div><button onclick="parseSheet()">Charger les colonnes</button></div>
+  </div>
+  <div class="grid" style="margin-top:12px">
+    <div><label>Direction d'essai (fixée pour toute l'analyse) :</label>
+      <select id="c_dir"><option value="L">L (longitudinal)</option><option value="S">S (transverse)</option><option value="D">D (diagonal)</option></select></div>
+    <div><label>Rp min (MPa) :</label><input type="number" id="c_rp" value="460"></div>
+    <div><label>Rm max (MPa) :</label><input type="number" id="c_rm" value="680"></div>
+    <div><label>A min (%) (strict &gt;) :</label><input type="number" id="c_a" value="15"></div>
+    <div><label>Épaisseur faible si Th ≤ (mm) :</label><input type="number" id="c_lo" step="0.05" value="1.0"></div>
+    <div><label>Épaisseur forte si Th ≥ (mm) :</label><input type="number" id="c_hi" step="0.05" value="1.4"></div>
+    <div><label>CART : bobines min / feuille :</label><input type="number" id="c_leaf" value="15"></div>
+    <div><label>CART : profondeur max :</label><input type="number" id="c_depth" value="3"></div>
+  </div>
+</div>
+
+<div id="mappingCard" class="card hidden">
+  <h3>2. Association des colonnes</h3>
+  <div class="grid" id="mappingGrid"></div>
+  <button onclick="runAnalysis()">Lancer l'analyse</button>
+</div>
+
+<div id="results" class="hidden">
+  <div class="card grid" id="kpis"></div>
+  <div class="card"><h3>3. Rejets par régime d'épaisseur</h3><div id="barChart"></div></div>
+
+  <div class="card">
+    <h3>4. Arbre CART &amp; fenêtre opératoire</h3>
+    <div class="grid">
+      <div><label>Régime :</label><select id="regimeFilter" onchange="updateRegime()"></select></div>
+      <div><label>Axe X :</label><select id="xSel" onchange="updateScatter()"></select></div>
+      <div><label>Axe Y :</label><select id="ySel" onchange="updateScatter()"></select></div>
+      <div><label>Point suivi (clic sur le graphe) :</label><button type="button" style="background:#64748b;margin-top:4px" onclick="tracked=null;updateScatter()">Effacer</button></div>
+    </div>
+    <h4>Règles CART</h4>
+    <div id="treeRules" class="box"></div>
+    <div id="scatter" style="margin-top:15px"></div>
+  </div>
+
+  <div class="card" style="border-left:5px solid #16a34a">
+    <h3>5. Simulateur : consigne de recuit optimale</h3>
+    <p style="font-size:13.5px;color:#475569">Modèle calibré sur le régime d'épaisseur de la bobine saisie, avec la direction choisie.</p>
+    <label><strong>Charger une bobine du fichier :</strong></label>
+    <select id="coilSel" onchange="fillFromCoil()" style="max-width:300px"><option value="">-- Saisie manuelle --</option></select>
+    <div class="grid" style="margin-top:10px">
+      <div><label>Épaisseur Th (mm) * :</label><input type="number" id="s_Th" step="0.01" value="1.55"></div>
+      <div><label>Réduction %CR * :</label><input type="number" id="s_CR" step="0.1" value="56.5"></div>
+      <div><label>Bobinage CT (°C) * :</label><input type="number" id="s_CT" value="555"></div>
+      <div><label>Vitesse ROT :</label><input type="number" id="s_Vrot" step="0.1"></div>
+      <div><label>Vitesse ligne recuit (vide = optimisée) :</label><input type="number" id="s_V" step="1"></div>
+      <div><label>C wt% :</label><input type="number" id="s_C" step="0.001"></div>
+      <div><label>Mn wt% :</label><input type="number" id="s_Mn" step="0.01"></div>
+      <div><label>Nb wt% :</label><input type="number" id="s_Nb" step="0.001"></div>
+      <div><label>Ti wt% :</label><input type="number" id="s_Ti" step="0.001"></div>
+      <div><label>N wt% :</label><input type="number" id="s_N" step="0.0001"></div>
+    </div>
+    <button onclick="simulate()" style="background:#16a34a">Calculer la consigne</button>
+    <div id="simOut" class="box" style="margin-top:15px;display:none"></div>
+    <div id="simTab" style="margin-top:14px;overflow-x:auto"></div>
+  </div>
+</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+let wb = null, raw = [], all = [], data = [], tracked = null, C = {};
+
+const FIELDS = [
+  {id:'Rp',label:'Rp (MPa) *',req:1},{id:'Rm',label:'Rm (MPa) *',req:1},{id:'A',label:'Allongement A (%)'},
+  {id:'Th',label:'Épaisseur finale (mm) *',req:1},{id:'CR',label:'%CR *',req:1},{id:'CT',label:'Bobinage CT (°C) *',req:1},
+  {id:'T_recuit',label:'T recuit galva (°C) *',req:1},{id:'V_galva',label:'Vitesse ligne recuit *',req:1},
+  {id:'V_rot',label:'Vitesse ROT'},{id:'Nb',label:'Nb (wt%)'},{id:'Ti',label:'Ti (wt%)'},{id:'N',label:'N (wt%)'},
+  {id:'C',label:'C (wt%)'},{id:'Mn',label:'Mn (wt%)'},{id:'Dir',label:'Direction essai'},{id:'CoilID',label:'Code bobine (idéalement unique par bobine)'}
+];
+const ST = {OK:'Conforme',DOUX:'Rejet Doux',DUR:'Rejet Dur',DUCT:'Rejet Ductilité',MULT:'Rejet Multiple'};
+const STL = Object.values(ST);
+const COL = {'Conforme':'#16a34a','Rejet Doux':'#2563eb','Rejet Dur':'#dc2626','Rejet Ductilité':'#d97706','Rejet Multiple':'#9333ea'};
+const REGS = ['Faible','Moyenne','Épaisse'];
+const regime = th => th <= C.lo ? 'Faible' : th >= C.hi ? 'Épaisse' : 'Moyenne';
+
+$('fileInput').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
+    $('sheetSelect').innerHTML = wb.SheetNames.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    $('sheetControls').classList.remove('hidden');
+    parseSheet();
+  };
+  r.readAsArrayBuffer(file);
+});
+
+function parseSheet() {
+  if (!wb) return;
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[$('sheetSelect').value], {header:1, defval:''});
+  const hi = parseInt($('headerRow').value, 10) - 1;
+  if (rows.length <= hi) return alert("Ligne d'en-tête invalide.");
+  const headers = rows[hi].map((h,i) => h ? String(h).trim() : `Col_${i+1}`);
+  raw = rows.slice(hi+1).map(r => { const o = {}; headers.forEach((h,i) => o[h] = r[i]); return o; });
+  $('mappingGrid').innerHTML = FIELDS.map(f => `<div><label>${f.label}</label><select id="map_${f.id}"><option value="">(Ignorer)</option>${headers.map(h => `<option value="${esc(h)}">${esc(h)}</option>`).join('')}</select></div>`).join('');
+  try {
+    const sv = JSON.parse(localStorage.getItem('hsla_mapping') || '{}');
+    FIELDS.forEach(f => { if (sv[f.id] && headers.includes(sv[f.id])) $('map_'+f.id).value = sv[f.id]; });
+  } catch(e) {}
+  $('mappingCard').classList.remove('hidden');
+}
+
+function runAnalysis() {
+  for (const f of FIELDS.filter(x => x.req)) if (!$('map_'+f.id).value) return alert('Colonne obligatoire : ' + f.label);
+  try { const m = {}; FIELDS.forEach(f => m[f.id] = $('map_'+f.id).value); localStorage.setItem('hsla_mapping', JSON.stringify(m)); } catch(e) {}
+  C = {rp:+$('c_rp').value, rm:+$('c_rm').value, a:+$('c_a').value, lo:+$('c_lo').value, hi:+$('c_hi').value,
+       dir:$('c_dir').value, leaf:Math.max(5,+$('c_leaf').value||15), depth:+$('c_depth').value||3};
+  const dirMapped = !!$('map_Dir').value;
+  all = [];
+  raw.forEach(row => {
+    const it = {};
+    FIELDS.forEach(f => {
+      const col = $('map_'+f.id).value;
+      if (f.id === 'Dir') it.Dir = col ? String(row[col]).trim().toUpperCase() : '';
+      else if (f.id === 'CoilID') it.CoilID = col ? String(row[col]).trim() : '';
+      else it[f.id] = col ? parseFloat(String(row[col]).replace(',', '.')) : NaN;
+    });
+    if ([it.Rp,it.Rm,it.Th,it.CR,it.CT,it.T_recuit,it.V_galva].some(isNaN)) return;
+    if (dirMapped && it.Dir !== C.dir) return;
+    const doux = it.Rp < C.rp, dur = it.Rm > C.rm, duct = !isNaN(it.A) && it.A <= C.a;
+    const n = doux + dur + duct;
+    it.Statut = n > 1 ? ST.MULT : doux ? ST.DOUX : dur ? ST.DUR : duct ? ST.DUCT : ST.OK;
+    if (![it.Nb,it.N,it.Ti].some(isNaN)) it.Nb_eff = it.Nb - Math.max(0, 6.64 * (it.N - 0.292 * it.Ti));
+    if (![it.C,it.Mn].some(isNaN)) it.C_eq = it.C + it.Mn / 6;
+    if (!isNaN(it.V_rot) && it.CT > 400) it.Potentiel_HSM = it.V_rot / (it.CT - 400);
+    it.Regime = regime(it.Th);
+    all.push(it);
+  });
+  data = all;
+  C.hasA = data.some(d => !isNaN(d.A));
+  if (!data.length) return alert("Aucune ligne exploitable pour cette direction.");
+  render();
+}
+
+function render() {
+  const n = data.length, cnt = s => data.filter(d => d.Statut === s).length, pc = s => (cnt(s)/n*100).toFixed(1) + ' %';
+  $('kpis').innerHTML = [
+    ['Rejet global', ((n-cnt(ST.OK))/n*100).toFixed(1)+' %'], [`Doux (Rp < ${C.rp})`, pc(ST.DOUX)], [`Durs (Rm > ${C.rm})`, pc(ST.DUR)],
+    [`Ductilité (A ≤ ${C.a})`, C.hasA ? pc(ST.DUCT) : 'N/A'], ['Multiples', pc(ST.MULT)], [`Bobines (dir. ${C.dir})`, n]
+  ].map(k => `<div class="kpi"><div>${k[0]}</div><h2>${k[1]}</h2></div>`).join('');
+  $('results').classList.remove('hidden');
+  const regs = REGS.filter(r => data.some(d => d.Regime === r));
+  Plotly.newPlot('barChart', STL.map(s => ({x:regs, y:regs.map(r => data.filter(d => d.Regime === r && d.Statut === s).length), name:s, type:'bar', marker:{color:COL[s]}})), {barmode:'group', height:320, margin:{t:20}});
+  $('regimeFilter').innerHTML = ['Tous', ...regs].map(r => `<option>${r}</option>`).join('');
+  const nc = ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','A'].filter(k => data.some(d => !isNaN(d[k])));
+  $('xSel').innerHTML = $('ySel').innerHTML = nc.map(c => `<option>${c}</option>`).join('');
+  if (nc.length > 1) $('ySel').selectedIndex = 1;
+  const ids = [...new Set(data.map(d => d.CoilID).filter(Boolean))];
+  $('coilSel').innerHTML = '<option value="">-- Saisie manuelle --</option>' + ids.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  updateRegime();
+}
+
+const sub = () => { const r = $('regimeFilter').value; return r === 'Tous' ? data : data.filter(d => d.Regime === r); };
+
+function updateRegime() {
+  const rows = sub();
+  const feats = ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq'].filter(k => rows.filter(d => !isNaN(d[k])).length >= 0.8 * rows.length);
+  const cc = rows.filter(d => feats.every(k => !isNaN(d[k])));
+  $('treeRules').innerText = `Variables : ${feats.join(', ')} | ${cc.length}/${rows.length} bobines complètes utilisées\n` +
+    (cc.length < 2 * C.leaf ? formatLeaf(cc.length ? cc : rows) : cart(cc, feats, 0));
+  updateScatter();
+}
+
+function formatLeaf(a) {
+  const n = a.length, c = s => a.filter(d => d.Statut === s).length, ok = c(ST.OK), p = Math.round(ok/n*100);
+  if (p >= 85) return `[FENÊTRE SÛRE] ${n} bob. → ${p}% conformes`;
+  const top = STL.slice(1).map(s => [s, c(s)]).sort((x,y) => y[1]-x[1])[0];
+  return `[ZONE À RISQUE] ${n} bob. → ${p}% conformes | dominant : ${top[0]} (${Math.round(top[1]/n*100)}%)`;
+}
+function gini(a) { if (!a.length) return 0; const m = {}; a.forEach(d => m[d.Statut] = (m[d.Statut]||0)+1); return 1 - Object.values(m).reduce((s,v) => s + (v/a.length)**2, 0); }
+
+function cart(rows, feats, d) {
+  const g = gini(rows);
+  if (d >= C.depth || g < 0.05) return formatLeaf(rows);
+  let best = null;
+  feats.forEach(k => {
+    const vs = rows.map(r => r[k]).sort((a,b) => a-b), cands = new Set();
+    for (let i = 1; i < 30; i++) cands.add(vs[Math.floor(i*(vs.length-1)/30)]);
+    cands.forEach(t => {
+      const L = [], R = [];
+      rows.forEach(r => (r[k] <= t ? L : R).push(r));
+      if (L.length < C.leaf || R.length < C.leaf) return;
+      const gain = g - (L.length*gini(L) + R.length*gini(R)) / rows.length;
+      if (!best || gain > best.gain) best = {gain, k, t, L, R};
+    });
+  });
+  if (!best || best.gain < 0.01) return formatLeaf(rows);
+  const ind = '   '.repeat(d);
+  return `\n${ind}├─ SI ${best.k} <= ${best.t.toFixed(2)} (${best.L.length}) : ${cart(best.L, feats, d+1)}` +
+         `\n${ind}└─ SI ${best.k} >  ${best.t.toFixed(2)} (${best.R.length}) : ${cart(best.R, feats, d+1)}`;
+}
+
+function updateScatter() {
+  const xc = $('xSel').value, yc = $('ySel').value, rows = sub();
+  const traces = STL.map(s => {
+    const p = rows.filter(d => d.Statut === s);
+    return {x:p.map(d => d[xc]), y:p.map(d => d[yc]), customdata:p, mode:'markers', type:'scatter', name:s, marker:{size:9, color:COL[s], opacity:.85},
+      text:p.map(d => `${d.CoilID ? 'Bobine '+d.CoilID+'<br>' : ''}Rp ${d.Rp} | Rm ${d.Rm}${isNaN(d.A) ? '' : ' | A '+d.A+'%'}<br>Th ${d.Th} | CR ${d.CR} | CT ${d.CT} | T ${d.T_recuit} | V ${d.V_galva}`)};
+  });
+  if (tracked && rows.includes(tracked)) traces.push({x:[tracked[xc]], y:[tracked[yc]], mode:'markers', type:'scatter', name:'Point suivi', marker:{size:18, color:'#facc15', symbol:'star', line:{color:'#000', width:2}}});
+  const div = $('scatter');
+  Plotly.newPlot(div, traces, {xaxis:{title:xc}, yaxis:{title:yc}, height:430, margin:{t:20}});
+  div.removeAllListeners && div.removeAllListeners('plotly_click');
+  div.on('plotly_click', e => { if (e.points[0] && e.points[0].customdata) { tracked = e.points[0].customdata; updateScatter(); } });
+}
+
+/* ---------- Modèle : ridge standardisé, CV groupée par bobine, probabilité conjointe ---------- */
+function solve(A, b) {
+  const p = b.length, M = A.map((r,i) => [...r, b[i]]);
+  for (let i = 0; i < p; i++) {
+    let m = i; for (let k = i+1; k < p; k++) if (Math.abs(M[k][i]) > Math.abs(M[m][i])) m = k;
+    [M[i], M[m]] = [M[m], M[i]];
+    if (Math.abs(M[i][i]) < 1e-12) return null;
+    for (let k = i+1; k < p; k++) { const f = M[k][i]/M[i][i]; for (let j = i; j <= p; j++) M[k][j] -= f*M[i][j]; }
+  }
+  const x = Array(p).fill(0);
+  for (let i = p-1; i >= 0; i--) { x[i] = M[i][p]; for (let j = i+1; j < p; j++) x[i] -= M[i][j]*x[j]; x[i] /= M[i][i]; }
+  return x;
+}
+function vec(r, f, q) { const v = f.map(c => r[c]); if (q) { v.push(r.T_recuit**2); if (f.includes('CT')) v.push(r.T_recuit*r.CT); } return v; }
+
+function fitModel(rows, f, q, y, lam = 1) {
+  const X = rows.map(r => vec(r, f, q)), p = X[0].length, n = X.length;
+  const mu = [], sd = [];
+  for (let j = 0; j < p; j++) {
+    const m = X.reduce((s,v) => s+v[j], 0)/n, s = Math.sqrt(X.reduce((a,v) => a+(v[j]-m)**2, 0)/n);
+    mu.push(m); sd.push(s || 1);
+  }
+  const Z = X.map(v => [1, ...v.map((x,j) => (x-mu[j])/sd[j])]);
+  const A = Array.from({length:p+1}, () => Array(p+1).fill(0)), b = Array(p+1).fill(0);
+  Z.forEach((z,k) => { for (let i = 0; i <= p; i++) { b[i] += z[i]*rows[k][y]; for (let j = 0; j <= p; j++) A[i][j] += z[i]*z[j]; } });
+  for (let i = 1; i <= p; i++) A[i][i] += lam;
+  const beta = solve(A, b);
+  return beta ? {f, q, mu, sd, beta} : null;
+}
+function pred(m, r) { const v = vec(r, m.f, m.q); let s = m.beta[0]; v.forEach((x,j) => s += m.beta[j+1]*(x-m.mu[j])/m.sd[j]); return s; }
+
+// Validation croisée 5 blocs : toutes les lignes d'une même bobine restent dans le même bloc
+function cvRes(rows, f, q, ys, k = 5) {
+  const fold = new Map(); let c = 0;
+  const fi = rows.map((r,i) => { const g = r.CoilID || ('#'+i); if (!fold.has(g)) fold.set(g, c++ % k); return fold.get(g); });
+  const R = rows.map(() => Array(ys.length).fill(NaN));
+  for (let a = 0; a < k; a++) {
+    const tr = rows.filter((_,i) => fi[i] !== a);
+    const ms = ys.map(y => fitModel(tr, f, q, y));
+    if (ms.some(m => !m)) return null;
+    rows.forEach((r,i) => { if (fi[i] === a) ys.forEach((y,t) => R[i][t] = r[y] - pred(ms[t], r)); });
+  }
+  return R;
+}
+const cvScore = (R, rows, ys) => ys.reduce((s,y,t) => {
+  const mean = rows.reduce((a,r) => a+r[y], 0)/rows.length, sdy = Math.sqrt(rows.reduce((a,r) => a+(r[y]-mean)**2, 0)/rows.length) || 1;
+  return s + Math.sqrt(R.reduce((a,r) => a+r[t]**2, 0)/R.length)/sdy;
+}, 0);
+
+function chol(S) {
+  const n = S.length, L = S.map(() => Array(n).fill(0));
+  for (let i = 0; i < n; i++) for (let j = 0; j <= i; j++) {
+    let s = S[i][j]; for (let k = 0; k < j; k++) s -= L[i][k]*L[j][k];
+    L[i][j] = i === j ? Math.sqrt(Math.max(s, 1e-9)) : s/L[j][j];
+  }
+  return L;
+}
+function makeDraws(L, N = 600) {
+  let seed = 12345; const rnd = () => (seed = (seed*1664525 + 1013904223) >>> 0) / 4294967296;
+  const gs = () => Math.sqrt(-2*Math.log(rnd() || 1e-12)) * Math.cos(2*Math.PI*rnd());
+  return Array.from({length:N}, () => { const z = L.map(gs); return L.map((row,i) => row.reduce((s,l,j) => s + l*z[j], 0)); });
+}
+const quant = (arr, p) => { const s = [...arr].sort((a,b) => a-b); return s[Math.round(p*(s.length-1))]; };
+
+function simulate() {
+  const out = $('simOut'); out.style.display = 'block'; $('simTab').innerHTML = '';
+  if (!data.length) { out.innerText = "Lancez d'abord l'analyse."; return; }
+  const v = id => parseFloat($(id).value);
+  const inp = {Th:v('s_Th'), CR:v('s_CR'), CT:v('s_CT'), V_rot:v('s_Vrot'), V_galva:v('s_V'), C:v('s_C'), Mn:v('s_Mn'), Nb:v('s_Nb'), Ti:v('s_Ti'), N:v('s_N')};
+  if ([inp.Th, inp.CR, inp.CT].some(isNaN)) { out.innerText = 'Renseignez Th, %CR et CT.'; return; }
+  inp.Nb_eff = ![inp.Nb,inp.N,inp.Ti].some(isNaN) ? inp.Nb - Math.max(0, 6.64*(inp.N - 0.292*inp.Ti)) : NaN;
+  inp.C_eq = ![inp.C,inp.Mn].some(isNaN) ? inp.C + inp.Mn/6 : NaN;
+  inp.Potentiel_HSM = !isNaN(inp.V_rot) && inp.CT > 400 ? inp.V_rot/(inp.CT-400) : NaN;
+
+  const reg = regime(inp.Th);
+  let pool = data.filter(d => d.Regime === reg), note = '';
+  if (pool.length < 40) { pool = data; note = `⚠️ Régime ${reg} : < 40 essais, calibration sur toutes les épaisseurs.\n`; }
+  const cov = c => pool.filter(d => !isNaN(d[c])).length / pool.length;
+  const f = ['T_recuit','V_galva','CT','V_rot','CR','Th','Nb_eff','C_eq'].filter(c => c === 'T_recuit' || c === 'V_galva' ? cov(c) >= .8 : !isNaN(inp[c]) && cov(c) >= .8);
+  let tr = pool.filter(d => f.every(c => !isNaN(d[c])));
+  let useA = C.hasA;
+  if (useA) { const t2 = tr.filter(d => !isNaN(d.A)); if (t2.length >= 30 && t2.length >= .5*tr.length) tr = t2; else useA = false; }
+  if (tr.length < 30) { out.innerText = 'Données insuffisantes (< 30 essais complets).'; return; }
+  const ys = useA ? ['Rp','Rm','A'] : ['Rp','Rm'];
+
+  // choix linéaire vs quadratique (T², T×CT) par erreur hors échantillon
+  const R0 = cvRes(tr, f, false, ys), R1 = cvRes(tr, f, true, ys);
+  if (!R0 || !R1) { out.innerText = 'Calibration impossible (colinéarité).'; return; }
+  const q = cvScore(R1, tr, ys) < cvScore(R0, tr, ys) - 0.01, R = q ? R1 : R0;
+  const ms = ys.map(y => fitModel(tr, f, q, y));
+  const sdv = ys.map((_,t) => Math.sqrt(R.reduce((a,r) => a+r[t]**2, 0)/R.length));
+  const r2 = ys.map((y,t) => { const m = tr.reduce((a,r) => a+r[y], 0)/tr.length; return 1 - R.reduce((a,r) => a+r[t]**2, 0)/tr.reduce((a,r) => a+(r[y]-m)**2, 0); });
+  const S = ys.map((_,i) => ys.map((_,j) => R.reduce((a,r) => a+r[i]*r[j], 0)/R.length));
+  const E = makeDraws(chol(S));
+  const corr = S[0][1]/Math.sqrt(S[0][0]*S[1][1]);
+
+  const pOk = (p) => { let c = 0; for (const e of E) if (p[0]+e[0] >= C.rp && p[1]+e[1] <= C.rm && (!useA || p[2]+e[2] > C.a)) c++; return c/E.length; };
+  const predAll = row => ms.map(m => pred(m, row));
+
+  const tv = tr.map(d => d.T_recuit), tMin = Math.floor(quant(tv, .05)), tMax = Math.ceil(quant(tv, .95));
+  const useV = f.includes('V_galva'), vFixed = useV && !isNaN(inp.V_galva);
+  let vGrid = [NaN], vMin = NaN, vMax = NaN;
+  if (vFixed) vGrid = [inp.V_galva];
+  else if (useV) { const vs = tr.map(d => d.V_galva); vMin = quant(vs, .05); vMax = quant(vs, .95); vGrid = Array.from({length:15}, (_,i) => vMin + (vMax-vMin)*i/14); }
+
+  const grid = [];
+  for (let t = tMin; t <= tMax; t++) for (const vg of vGrid) {
+    const p = predAll({...inp, T_recuit:t, V_galva:vg});
+    grid.push({t, v:vg, p, pOk:pOk(p)});
+  }
+  const maxP = Math.max(...grid.map(g => g.pOk)), plat = grid.filter(g => g.pOk >= maxP - .01);
+  const tMed = quant(plat.map(g => g.t), .5), vMed = vGrid.length > 1 ? quant(plat.map(g => g.v), .5) : NaN;
+  const dist = g => Math.abs(g.t - tMed) + (vGrid.length > 1 ? Math.abs(g.v - vMed)/(vMax - vMin)*(tMax - tMin) : 0);
+  const best = plat.reduce((a,b) => dist(b) < dist(a) ? b : a);
+  const ok95 = grid.filter(g => g.pOk >= .95);
+
+  let t = note + `Régime ${reg} | direction ${C.dir} | ${tr.length} essais | modèle ${q ? 'quadratique (T², T×CT)' : 'linéaire'}\n`;
+  t += `Variables : ${f.join(', ')}\n`;
+  t += `R² hors échantillon (CV par bobine) : ` + ys.map((y,i) => `${y} ${r2[i].toFixed(2)} (±${sdv[i].toFixed(1)})`).join(' | ') + ` | corr. résidus Rp-Rm ${corr.toFixed(2)}\n`;
+  t += `Plage T explorée : ${tMin}–${tMax} °C${vGrid.length > 1 ? ` | plage vitesse : ${vMin.toFixed(0)}–${vMax.toFixed(0)}` : ''}\n${'-'.repeat(60)}\n`;
+  t += `CONSIGNE T_recuit = ${best.t} °C${vGrid.length > 1 ? ' | VITESSE recommandée = ' + best.v.toFixed(0) : vFixed ? ' (vitesse fixée ' + inp.V_galva + ')' : ''}\n`;
+  t += `Prévu : Rp ${best.p[0].toFixed(0)} | Rm ${best.p[1].toFixed(0)}${useA ? ' | A ' + best.p[2].toFixed(1) + ' %' : ''}\n`;
+  t += `Probabilité conjointe de conformité : ${(best.pOk*100).toFixed(0)} %\n`;
+  if (ok95.length) t += `Plage T à ≥ 95 % : ${Math.min(...ok95.map(g => g.t))}–${Math.max(...ok95.map(g => g.t))} °C\n`;
+  else t += `⚠️ Aucun point à 95 % : bobine à risque.\n`;
+  if (best.t === tMin || best.t === tMax || (vGrid.length > 1 && (best.v === vMin || best.v === vMax))) t += `⚠️ Optimum en bord de plage historique : à valider côté procédé.\n`;
+  if (r2.some(x => x < .3)) t += `⚠️ R² < 0.3 : consigne indicative seulement.\n`;
+  const outside = ['Th','CR','CT','V_rot','Nb_eff','C_eq','Potentiel_HSM'].filter(c => !isNaN(inp[c])).filter(c => {
+    const a = pool.map(d => d[c]).filter(x => !isNaN(x)); return a.length > 20 && (inp[c] < quant(a, .025) || inp[c] > quant(a, .975));
+  });
+  if (outside.length) t += `⚠️ Hors plage historique (2,5–97,5 %) : ${outside.join(', ')} → extrapolation.\n`;
+  t += `ℹ️ Le modèle reflète aussi la pratique passée des opérateurs (corrélation, pas causalité) : valider sur ligne.\n`;
+  out.innerText = t;
+
+  // grille de sensibilité
+  const ts = Array.from({length:5}, (_,i) => Math.max(tMin, Math.min(tMax-8, best.t-4)) + 2*i).filter(x => x <= tMax);
+  const sp = vGrid.length > 1 ? [...new Set([Math.round(vMin), Math.round(best.v), Math.round(vMax)])].sort((a,b) => a-b) : [vGrid[0]];
+  let h = `<b>Grille de sensibilité</b><table><tr style="background:#f1f5f9"><th>Vitesse \\ T</th>${ts.map(x => `<th>${x} °C</th>`).join('')}</tr>`;
+  sp.forEach(vg => {
+    h += `<tr><td><b>${isNaN(vg) ? 'Standard' : 'V = ' + vg}</b></td>`;
+    ts.forEach(x => {
+      const p = predAll({...inp, T_recuit:x, V_galva:vg}), po = pOk(p);
+      const bg = po >= .8 ? '#dcfce7' : po >= .5 ? '#fef9c3' : '#fee2e2';
+      const isB = x === best.t && (isNaN(vg) || Math.abs(vg - best.v) < 1);
+      h += `<td style="background:${bg};${isB ? 'border:3px solid #16a34a' : ''}"><b>Rp ${p[0].toFixed(0)}</b> | Rm ${p[1].toFixed(0)}${useA ? ' | A ' + p[2].toFixed(1) : ''}<br><small>Conf. ${(po*100).toFixed(0)}%</small></td>`;
+    });
+    h += '</tr>';
+  });
+  $('simTab').innerHTML = h + `</table><div style="font-size:.78em;color:#64748b;margin-top:4px">Vert ≥ 80 % | Jaune 50–80 % | Rouge &lt; 50 % | cadre épais : consigne recommandée</div>`;
+}
+
+function fillFromCoil() {
+  const r = data.find(d => d.CoilID === $('coilSel').value); if (!r) return;
+  const set = (id, x) => $(id).value = isNaN(x) ? '' : x;
+  set('s_Th', r.Th); set('s_CR', r.CR); set('s_CT', r.CT); set('s_Vrot', r.V_rot); set('s_V', NaN);
+  set('s_C', r.C); set('s_Mn', r.Mn); set('s_Nb', r.Nb); set('s_Ti', r.Ti); set('s_N', r.N);
+  simulate();
+}
+</script>
+</body>
+</html>
