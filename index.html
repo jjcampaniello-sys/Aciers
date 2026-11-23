@@ -200,7 +200,7 @@ const sub = () => { const r = $('regimeFilter').value; return r === 'Tous' ? dat
 
 function updateRegime() {
   const rows = sub();
-  const feats = ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','Pos','TF7'].filter(k => rows.filter(d => !isNaN(d[k])).length >= 0.8 * rows.length);
+  const feats = ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','TF7'].filter(k => rows.filter(d => !isNaN(d[k])).length >= 0.8 * rows.length);
   const cc = rows.filter(d => feats.every(k => !isNaN(d[k])));
   $('treeRules').innerText = `Variables : ${feats.join(', ')} | ${cc.length}/${rows.length} bobines complètes utilisées\n` +
     (cc.length < 2 * C.leaf ? formatLeaf(cc.length ? cc : rows) : cart(cc, feats, 0));
