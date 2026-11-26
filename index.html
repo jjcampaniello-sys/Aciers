@@ -92,6 +92,8 @@
     </div>
     <div id="scatterPlot" style="height:440px"></div>
     <h4 style="margin:14px 0 6px">CART Rules</h4>
+        <h4 style="margin:14px 0 6px">CART Rules</h4>
+    <pre id="treeView" style="background:#f8fafc;border:1px solid #e2e8f0;padding:12px;border-radius:8px;font-family:ui-monospace,monospace;font-size:13px;line-height:1.55;overflow-x:auto;margin-bottom:10px"></pre>
     <div id="rulesTable"></div>
   </div>
 
@@ -256,8 +258,10 @@ function updateRegime() {
     : ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','TF7'];
   const feats = cand.filter(k => rows.filter(d => !isNaN(d[k])).length >= 0.8 * rows.length);
   curLeaves = [];
-  if (rows.length >= C.leaf && feats.length) buildTree(rows, feats, 0, []);
+  const tree = (rows.length >= C.leaf && feats.length) ? buildTree(rows, feats, 0, []) : null;
   const tot = rows.length || 1;
+  $('treeView').style.display = tree ? 'block' : 'none';
+  if (tree) $('treeView').innerText = renderTreeText(tree, tot);
   $('rulesTable').innerHTML = curLeaves.length ? `<table><tr><th>CART Rule</th><th>Coils</th><th>%</th><th>Main Status</th><th>% Compliant</th><th>% Soft</th><th>% Hard</th></tr>` +
     curLeaves.sort((a,b) => b.n - a.n).map(l => `<tr><td>${l.rule || 'All'}</td><td>${l.n}</td><td>${(100*l.n/tot).toFixed(1)}%</td><td><b>${l.top}</b></td><td>${l.pOK}%</td><td>${l.pDoux}%</td><td>${l.pDur}%</td></tr>`).join('') + `</table>` : '<p>Insufficient data for CART.</p>';
   updateScatter();
@@ -286,16 +290,40 @@ function buildTree(rows, feats, depth, conds) {
       }
     });
   }
+  const pOK = (100*rows.filter(r=>r.Statut===ST.OK).length/n).toFixed(0);
+  const pDoux = (100*rows.filter(r=>r.Statut===ST.DOUX).length/n).toFixed(0);
+  const pDur = (100*rows.filter(r=>r.Statut===ST.DUR).length/n).toFixed(0);
   if (best.gain > 0.005) {
-    buildTree(best.L, feats, depth+1, [...conds, `${best.f} ≤ ${best.thr.toFixed(2)}`]);
-    buildTree(best.R, feats, depth+1, [...conds, `${best.f} > ${best.thr.toFixed(2)}`]);
+    return {
+      n, pOK, pDoux, pDur, feat: best.f, thr: best.thr,
+      left: buildTree(best.L, feats, depth+1, [...conds, `${best.f} ≤ ${best.thr.toFixed(2)}`]),
+      right: buildTree(best.R, feats, depth+1, [...conds, `${best.f} > ${best.thr.toFixed(2)}`])
+    };
   } else {
-    curLeaves.push({rule:conds.join(' AND '), n, top:counts[0][0],
-      pOK:(100*rows.filter(r=>r.Statut===ST.OK).length/n).toFixed(0),
-      pDoux:(100*rows.filter(r=>r.Statut===ST.DOUX).length/n).toFixed(0),
-      pDur:(100*rows.filter(r=>r.Statut===ST.DUR).length/n).toFixed(0)});
+    const leaf = {rule:conds.join(' AND '), n, top:counts[0][0], pOK, pDoux, pDur};
+    curLeaves.push(leaf);
+    return leaf;
   }
 }
+
+function renderTreeText(node, tot, prefix = '', isLast = true, label = '') {
+  const conn = label ? (isLast ? '└── ' : '├── ') : '';
+  const nextPref = label ? prefix + (isLast ? '    ' : '│   ') : '';
+  if (node.feat) {
+    const head = label
+      ? `${prefix}${conn}${label} (n = ${node.n} | Compliant: ${node.pOK}%)`
+      : `Root (n = ${node.n} | Compliant: ${node.pOK}% | Soft: ${node.pDoux}% | Hard: ${node.pDur}%)`;
+    return [
+      head,
+      renderTreeText(node.left, tot, nextPref, false, `${node.feat} ≤ ${node.thr.toFixed(2)}`),
+      renderTreeText(node.right, tot, nextPref, true, `${node.feat} > ${node.thr.toFixed(2)}`)
+    ].join('\n');
+  }
+  const pct = (100 * node.n / tot).toFixed(1);
+  const leafInfo = `──► [${node.top}] n = ${node.n} (${pct}%) | OK: ${node.pOK}% | Soft: ${node.pDoux}% | Hard: ${node.pDur}%`;
+  return label ? `${prefix}${conn}${label}  ${leafInfo}` : `All Coils  ${leafInfo}`;
+}
+
 
 function updateScatter() {
   const xk = $('xSel').value, yk = $('ySel').value;
