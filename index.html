@@ -349,12 +349,14 @@ function updateScatter() {
 }
 
 function fillFromCoil() {
-const idx = $('coilSel').value; if (idx === '') return;
-const d = data[+idx];
-const set = (id, v) => $(id).value = isNaN(v) ? '' : v;
-set('s_Th', d.Th); set('s_CR', d.CR); set('s_CT', d.CT); set('s_Vrot', d.V_rot); set('s_V', '');
-set('s_C', d.C); set('s_Mn', d.Mn); set('s_Nb', d.Nb); set('s_Ti', d.Ti); set('s_N', d.N); set('s_Pos', d.Pos); set('s_TF7', d.TF7);
+  const idx = $('coilSel').value; if (idx === '') return;
+  const d = data[+idx];
+  const set = (id, v) => $(id).value = isNaN(v) ? '' : v;
+  set('s_Th', d.Th); set('s_CR', d.CR); set('s_CT', d.CT); set('s_Vrot', d.V_rot); set('s_V', '');
+  set('s_C', d.C); set('s_Mn', d.Mn); set('s_Nb', d.Nb); set('s_Ti', d.Ti); set('s_N', d.N); set('s_Pos', d.Pos); set('s_TF7', d.TF7);
+  set('s_Si', d.Si); set('s_Cr', d.Cr); set('s_Mo', d.Mo); set('s_B', d.B);
 }
+
 // --- Multivariate Ridge Calibration + Joint Conformity Simulation ---
 function solve(A, b) {
 const n = b.length, M = A.map((r,i) => [...r, b[i]]);
