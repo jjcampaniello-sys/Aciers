@@ -113,6 +113,10 @@
       <div><label>Nb wt%:</label><input type="number" id="s_Nb" step="0.001"></div>
       <div><label>Ti wt%:</label><input type="number" id="s_Ti" step="0.001"></div>
       <div><label>N wt%:</label><input type="number" id="s_N" step="0.0001"></div>
+            <div><label>Si wt%:</label><input type="number" id="s_Si" step="0.01"></div>
+      <div><label>Cr wt%:</label><input type="number" id="s_Cr" step="0.01"></div>
+      <div><label>Mo wt%:</label><input type="number" id="s_Mo" step="0.001"></div>
+      <div><label>B wt%:</label><input type="number" id="s_B" step="0.0001"></div>
       <div><label>Mother Coil Position (LENGTH_POS_MOTHER):</label><input type="number" id="s_Pos" step="1"></div>
       <div><label>Hot Rolling Temp (TEMP_START_F7):</label><input type="number" id="s_TF7" step="1"></div>
     </div>
@@ -130,6 +134,7 @@ const FIELDS = [
   {id:'T_recuit',label:'Annealing Temp (°C)',req:1},{id:'V_galva',label:'Annealing Line Speed',req:1},
   {id:'V_rot',label:'ROT Speed'},{id:'Nb',label:'Nb (wt%)'},{id:'Ti',label:'Ti (wt%)'},{id:'N',label:'N (wt%)'},
   {id:'C',label:'C (wt%)'},{id:'Mn',label:'Mn (wt%)'},{id:'Dir',label:'Test Direction'},{id:'CoilID',label:'Coil ID (ideally unique per coil)'},
+    {id:'Si',label:'Si (wt%)'},{id:'Cr',label:'Cr (wt%)'},{id:'Mo',label:'Mo (wt%)'},{id:'B',label:'B (wt%)'},
   {id:'Pos',label:'Mother Coil Position (LENGTH_POS_MOTHER)'},{id:'TF7',label:'Hot Rolling Temp (TEMP_START_F7)'}
 ];
 const ST = {OK:'Compliant', DOUX:'Soft Reject', DUR:'Hard Reject', DUCT:'Ductility Reject', MULT:'Multiple Reject'};
@@ -208,7 +213,13 @@ const doux = it.Rp < C.rp, dur = it.Rm > C.rm, duct = !isNaN(it.A) && it.A <= C.
 const n = doux + dur + duct;
 it.Statut = n > 1 ? ST.MULT : doux ? ST.DOUX : dur ? ST.DUR : duct ? ST.DUCT : ST.OK;
 if (![it.Nb,it.N,it.Ti].some(isNaN)) it.Nb_eff = it.Nb - Math.max(0, 6.64 * (it.N - 0.292 * it.Ti));
-if (![it.C,it.Mn].some(isNaN)) it.C_eq = it.C + it.Mn / 6;
+    // Dans runAnalysis() :
+    if (![it.C,it.Mn].some(isNaN)) {
+      it.C_eq = C.grade === 'AHSS'
+        ? it.C + (it.Mn + (it.Si||0))/6 + ((it.Cr||0) + (it.Mo||0))/5 + 5*(it.B||0)
+        : it.C + it.Mn/6;
+    }
+
 if (!isNaN(it.V_rot) && it.CT > 400) it.Potentiel_HSM = it.V_rot / (it.CT - 400);
 it.Regime = regime(it.Th);
 all.push(it);
@@ -421,13 +432,15 @@ function simulate() {
   if (!data.length) { out.innerText = 'Please run the analysis first.'; return; }
   const isHSM = C.route === 'HSM';
   const v = id => parseFloat($(id).value);
-  const inp = {Th:v('s_Th'), CR:v('s_CR'), CT:v('s_CT'), V_rot:v('s_Vrot'), V_galva:v('s_V'), C:v('s_C'), Mn:v('s_Mn'), Nb:v('s_Nb'), Ti:v('s_Ti'), N:v('s_N'), Pos:v('s_Pos'), TF7:v('s_TF7')};
+  const inp = {Th:v('s_Th'), CR:v('s_CR'), CT:v('s_CT'), V_rot:v('s_Vrot'), V_galva:v('s_V'), C:v('s_C'), Mn:v('s_Mn'), Si:v('s_Si'), Cr:v('s_Cr'), Mo:v('s_Mo'), B:v('s_B'), Nb:v('s_Nb'), Ti:v('s_Ti'), N:v('s_N'), Pos:v('s_Pos'), TF7:v('s_TF7')};
   if (isNaN(inp.Th) || isNaN(inp.CT) || (!isHSM && isNaN(inp.CR))) {
     out.innerText = isHSM ? 'Please enter Th and CT.' : 'Please enter Th, %CR and CT.'; return;
   }
   inp.Nb_eff = ![inp.Nb,inp.N,inp.Ti].some(isNaN) ? inp.Nb - Math.max(0, 6.64*(inp.N - 0.292*inp.Ti)) : NaN;
-  inp.C_eq = ![inp.C,inp.Mn].some(isNaN) ? inp.C + inp.Mn/6 : NaN;
-  inp.Potentiel_HSM = !isNaN(inp.V_rot) && inp.CT > 400 ? inp.V_rot/(inp.CT-400) : NaN;
+  inp.C_eq = ![inp.C,inp.Mn].some(isNaN)
+    ? (C.grade === 'AHSS' ? inp.C + (inp.Mn + (inp.Si||0))/6 + ((inp.Cr||0) + (inp.Mo||0))/5 + 5*(inp.B||0) : inp.C + inp.Mn/6)
+    : NaN;
+
 
   const reg = regime(inp.Th);
   let pool = data.filter(d => d.Regime === reg), note = '';
@@ -545,6 +558,12 @@ function simulate() {
   });
   if (outside.length) t += `⚠️ Outside historical range (2.5–97.5%): ${outside.join(', ')} → extrapolation.\n`;
   t += `ℹ️ Model also reflects past operator practices (correlation, not causality): validate on line.\n`;
+    if (C.grade === 'AHSS' && ![inp.C, inp.Mn].some(isNaN)) {
+    const ac1 = 723 - 10.7*inp.Mn - 16.9*(inp.Ni||0) + 29.1*(inp.Si||0) + 16.9*(inp.Cr||0);
+    const ac3 = 910 - 203*Math.sqrt(inp.C) + 44.7*(inp.Si||0) - 11*inp.Mn + 31.5*(inp.Mo||0) - 15.2*(inp.Ni||0);
+    t += `ℹ️ Estimated critical temperatures (Andrews): Ac1 ≈ ${ac1.toFixed(0)} °C | Ac3 ≈ ${ac3.toFixed(0)} °C (intercritical window for Dual Phase).\n`;
+  }
+
   out.innerText = t;
 }
 
