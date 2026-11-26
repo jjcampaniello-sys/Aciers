@@ -91,7 +91,6 @@
       <div><label>Y Axis:</label><select id="ySel" onchange="updateScatter()"></select></div>
     </div>
     <div id="scatterPlot" style="height:440px"></div>
-    <h4 style="margin:14px 0 6px">CART Rules</h4>
         <h4 style="margin:14px 0 6px">CART Rules</h4>
     <pre id="treeView" style="background:#f8fafc;border:1px solid #e2e8f0;padding:12px;border-radius:8px;font-family:ui-monospace,monospace;font-size:13px;line-height:1.55;overflow-x:auto;margin-bottom:10px"></pre>
     <div id="rulesTable"></div>
@@ -136,9 +135,10 @@ const FIELDS = [
   {id:'V_rot',label:'ROT Speed'},{id:'Nb',label:'Nb (wt%)'},{id:'Ti',label:'Ti (wt%)'},{id:'N',label:'N (wt%)'},
   {id:'C',label:'C (wt%)'},{id:'Mn',label:'Mn (wt%)'},{id:'Dir',label:'Test Direction'},{id:'CoilID',label:'Coil ID (ideally unique per coil)'},
     {id:'Si',label:'Si (wt%)'},{id:'Cr',label:'Cr (wt%)'},{id:'Mo',label:'Mo (wt%)'},{id:'B',label:'B (wt%)'},
-  {id:'Pos',label:'Mother Coil Position (LENGTH_POS_MOTHER)'},{id:'TF7',label:'Hot Rolling Temp (TEMP_START_F7)'}
-    {id:'RTF',label:'RTF / SF Temp (°C)'}
+    {id:'Pos',label:'Mother Coil Position (LENGTH_POS_MOTHER)'},{id:'TF7',label:'Hot Rolling Temp (TEMP_START_F7)'},
+  {id:'RTF',label:'RTF / SF Temp (°C)'}
 ];
+
 const ST = {OK:'Compliant', DOUX:'Soft Reject', DUR:'Hard Reject', DUCT:'Ductility Reject', MULT:'Multiple Reject'};
 const COLORS = {[ST.OK]:'#16a34a',[ST.DOUX]:'#2563eb',[ST.DUR]:'#dc2626',[ST.DUCT]:'#d97706',[ST.MULT]:'#7c3aed'};
 const REGS = ['Thin','Medium','Thick','All'];
@@ -357,6 +357,7 @@ function fillFromCoil() {
   set('s_Th', d.Th); set('s_CR', d.CR); set('s_CT', d.CT); set('s_Vrot', d.V_rot); set('s_V', '');
   set('s_C', d.C); set('s_Mn', d.Mn); set('s_Nb', d.Nb); set('s_Ti', d.Ti); set('s_N', d.N); set('s_Pos', d.Pos); set('s_TF7', d.TF7);
   set('s_Si', d.Si); set('s_Cr', d.Cr); set('s_Mo', d.Mo); set('s_B', d.B);
+  set('s_RTF', d.RTF);
 }
 
 // --- Multivariate Ridge Calibration + Joint Conformity Simulation ---
@@ -453,7 +454,7 @@ function simulate() {
   if (!data.length) { out.innerText = 'Please run the analysis first.'; return; }
   const isHSM = C.route === 'HSM';
   const v = id => parseFloat($(id).value);
-  const inp = {Th:v('s_Th'), CR:v('s_CR'), CT:v('s_CT'), V_rot:v('s_Vrot'), V_galva:v('s_V'), C:v('s_C'), Mn:v('s_Mn'), Si:v('s_Si'), Cr:v('s_Cr'), Mo:v('s_Mo'), B:v('s_B'), Nb:v('s_Nb'), Ti:v('s_Ti'), N:v('s_N'), Pos:v('s_Pos'), TF7:v('s_TF7')};
+  const inp = {Th:v('s_Th'), CR:v('s_CR'), CT:v('s_CT'), V_rot:v('s_Vrot'), V_galva:v('s_V'), C:v('s_C'), Mn:v('s_Mn'), Si:v('s_Si'), Cr:v('s_Cr'), Mo:v('s_Mo'), B:v('s_B'), Nb:v('s_Nb'), Ti:v('s_Ti'), N:v('s_N'), Pos:v('s_Pos'), TF7:v('s_TF7'), RTF:v('s_RTF')};
   if (isNaN(inp.Th) || isNaN(inp.CT) || (!isHSM && isNaN(inp.CR))) {
     out.innerText = isHSM ? 'Please enter Th and CT.' : 'Please enter Th, %CR and CT.'; return;
   }
@@ -461,7 +462,7 @@ function simulate() {
   inp.C_eq = ![inp.C,inp.Mn].some(isNaN)
     ? (C.grade === 'AHSS' ? inp.C + (inp.Mn + (inp.Si||0))/6 + ((inp.Cr||0) + (inp.Mo||0))/5 + 5*(inp.B||0) : inp.C + inp.Mn/6)
     : NaN;
-
+  inp.Potentiel_HSM = !isNaN(inp.V_rot) && inp.CT > 400 ? inp.V_rot/(inp.CT-400) : NaN;
 
   const reg = regime(inp.Th);
   let pool = data.filter(d => d.Regime === reg), note = '';
@@ -469,8 +470,8 @@ function simulate() {
   const cov = c => pool.filter(d => !isNaN(d[c])).length / pool.length;
 
   const candFeats = isHSM
-    ? ['CT','V_rot','Th','Nb_eff','C_eq','Pos','TF7']
-    : ['T_recuit','V_galva','CT','V_rot','CR','Th','Nb_eff','C_eq','Pos','TF7'];
+    ? ['CT','V_rot','Th','Nb_eff','C_eq','Pos','TF7','RTF']
+    : ['T_recuit','V_galva','CT','V_rot','CR','Th','Nb_eff','C_eq','Pos','TF7','RTF'];
   const f = candFeats.filter(c => (!isHSM && (c === 'T_recuit' || c === 'V_galva')) ? cov(c) >= .8 : !isNaN(inp[c]) && cov(c) >= .8);
 
   let tr = pool.filter(d => f.every(c => !isNaN(d[c])));
@@ -489,13 +490,12 @@ function simulate() {
   const E = makeDraws(chol(S));
   const corr = S[0][1]/Math.sqrt(S[0][0]*S[1][1]);
 
-    const pOk = (p, row) => {
+  const pOk = (p, row) => {
     const k = row ? uncFactor(ms[0], row) : 1;
     let c = 0;
     for (const e of E) if (p[0]+k*e[0] >= C.rp && p[1]+k*e[1] <= C.rm && (!useA || p[2]+k*e[2] > C.a)) c++;
     return c / E.length;
   };
-
   const predAll = row => ms.map(m => pred(m, row));
 
   let t = note + `Route: ${isHSM ? 'Hot Rolling only' : 'Annealing / Galva'} | Grade: ${C.grade} | Regime ${reg} | dir. ${C.dir} | ${tr.length} tests | ${q ? 'quadratic' : 'linear'} model\n`;
@@ -503,15 +503,17 @@ function simulate() {
   t += `Out-of-sample R² (coil-grouped CV): ` + ys.map((y,i) => `${y} ${r2[i].toFixed(2)} (±${sdv[i].toFixed(1)})`).join(' | ') + ` | Rp-Rm residual corr. ${corr.toFixed(2)}\n${'-'.repeat(60)}\n`;
 
   if (isHSM) {
-   const p = predAll(inp), po = pOk(p, inp);
+    const p = predAll(inp), po = pOk(p, inp);
+    const kUnc = uncFactor(ms[0], inp), sdvAdj = sdv.map(s => s * kUnc);
     t += `HOT-ROLLED PREDICTION (CT = ${inp.CT} °C):\n`;
-    t += `Predicted: Rp ${p[0].toFixed(0)} MPa | Rm ${p[1].toFixed(0)} MPa${useA ? ' | A ' + p[2].toFixed(1) + ' %' : ''}\n`;
+    t += `Predicted: Rp ${p[0].toFixed(0)} (±${sdvAdj[0].toFixed(1)}) MPa | Rm ${p[1].toFixed(0)} (±${sdvAdj[1].toFixed(1)}) MPa${useA ? ` | A ${p[2].toFixed(1)} (±${sdvAdj[2].toFixed(1)}) %` : ''}\n`;
+    t += `Uncertainty factor (distance to historical range): ×${kUnc.toFixed(2)}${kUnc > 1.25 ? ' ⚠️ EXTRAPOLATION' : ''}\n`;
     t += `Joint compliance probability: ${(po*100).toFixed(0)} %\n`;
 
     const cts = [-20, -10, 0, 10, 20].map(d => inp.CT + d);
     let h = `<b>Sensitivity to Coiling Temperature CT</b><table><tr style="background:#f1f5f9"><th>Metric \\ CT</th>${cts.map(x => `<th>${x} °C</th>`).join('')}</tr><tr><td><b>Prediction</b></td>`;
     cts.forEach(ct => {
-      const pc = predAll({...inp, CT:ct}), poc = pOk(pc, {...inp, CT:ct});
+      const r = {...inp, CT:ct}, pc = predAll(r), poc = pOk(pc, r);
       const bg = poc >= .8 ? '#dcfce7' : poc >= .5 ? '#fef9c3' : '#fee2e2';
       h += `<td style="background:${bg};${ct === inp.CT ? 'border:3px solid #16a34a' : ''}"><b>Rp ${pc[0].toFixed(0)}</b> | Rm ${pc[1].toFixed(0)}${useA ? ' | A ' + pc[2].toFixed(1) : ''}<br><small>Conf. ${(poc*100).toFixed(0)}%</small></td>`;
     });
@@ -525,22 +527,21 @@ function simulate() {
 
     const grid = [];
     for (let temp = tMin; temp <= tMax; temp++) for (const vg of vGrid) {
-      const p = predAll({...inp, T_recuit:temp, V_galva:vg});
-      grid.push({t:temp, v:vg, p, pOk:pOk(p)});
+      const r = {...inp, T_recuit:temp, V_galva:vg}, p = predAll(r);
+      grid.push({t:temp, v:vg, p, pOk:pOk(p, r)});
     }
     const maxP = Math.max(...grid.map(g => g.pOk)), plat = grid.filter(g => g.pOk >= maxP - .01);
     const tMed = quant(plat.map(g => g.t), .5), vMed = vGrid.length > 1 ? quant(plat.map(g => g.v), .5) : NaN;
     const dist = g => Math.abs(g.t - tMed) + (vGrid.length > 1 ? Math.abs(g.v - vMed)/(vMax - vMin)*(tMax - tMin) : 0);
     const best = plat.reduce((a,b) => dist(b) < dist(a) ? b : a);
     const ok95 = grid.filter(g => g.pOk >= .95);
-  const kUnc = uncFactor(ms[0], isHSM ? inp : {...inp, T_recuit: best.t, V_galva: best.v});
-  const sdvAdj = sdv.map(s => s * kUnc);
-  t += `Uncertainty factor (distance to historical range): ×${kUnc.toFixed(2)} → adjusted std. dev.: ` +
-       ys.map((y,i) => `${y} ±${sdvAdj[i].toFixed(1)}`).join(' | ') + `\n`;
+    const kUnc = uncFactor(ms[0], {...inp, T_recuit: best.t, V_galva: best.v});
+    const sdvAdj = sdv.map(s => s * kUnc);
 
     t += `Explored T range: ${tMin}–${tMax} °C${vGrid.length > 1 ? ` | speed range: ${vMin.toFixed(0)}–${vMax.toFixed(0)}` : ''}\n`;
     t += `SETPOINT T_anneal = ${best.t} °C${vGrid.length > 1 ? ' | RECOMMENDED SPEED = ' + best.v.toFixed(0) : vFixed ? ' (fixed speed ' + inp.V_galva + ')' : ''}\n`;
-    t += `Predicted: Rp ${best.p[0].toFixed(0)} | Rm ${best.p[1].toFixed(0)}${useA ? ' | A ' + best.p[2].toFixed(1) + ' %' : ''}\n`;
+    t += `Predicted: Rp ${best.p[0].toFixed(0)} (±${sdvAdj[0].toFixed(1)}) | Rm ${best.p[1].toFixed(0)} (±${sdvAdj[1].toFixed(1)})${useA ? ` | A ${best.p[2].toFixed(1)} (±${sdvAdj[2].toFixed(1)}) %` : ''}\n`;
+    t += `Uncertainty factor (distance to historical range): ×${kUnc.toFixed(2)}${kUnc > 1.25 ? ' ⚠️ EXTRAPOLATION' : ''}\n`;
     t += `Joint compliance probability: ${(best.pOk*100).toFixed(0)} %\n`;
     if (ok95.length) t += `T range at ≥ 95%: ${Math.min(...ok95.map(g => g.t))}–${Math.max(...ok95.map(g => g.t))} °C\n`;
     else t += `⚠️ No setpoint reaches 95% compliance: coil at risk.\n`;
@@ -552,7 +553,7 @@ function simulate() {
     sp.forEach(vg => {
       h += `<tr><td><b>${isNaN(vg) ? 'Standard' : 'V = ' + vg}</b></td>`;
       ts.forEach(x => {
-        const p = predAll({...inp, T_recuit:x, V_galva:vg}), po = pOk(p);
+        const r = {...inp, T_recuit:x, V_galva:vg}, p = predAll(r), po = pOk(p, r);
         const bg = po >= .8 ? '#dcfce7' : po >= .5 ? '#fef9c3' : '#fee2e2';
         const isB = x === best.t && (isNaN(vg) || Math.abs(vg - best.v) < 1);
         h += `<td style="background:${bg};${isB ? 'border:3px solid #16a34a' : ''}"><b>Rp ${p[0].toFixed(0)}</b> | Rm ${p[1].toFixed(0)}${useA ? ' | A ' + p[2].toFixed(1) : ''}<br><small>Conf. ${(po*100).toFixed(0)}%</small></td>`;
@@ -562,6 +563,7 @@ function simulate() {
 
     $('simTab').innerHTML = h + `</table><div style="font-size:.78em;color:#64748b;margin-top:4px">Green ≥ 80% | Yellow 50–80% | Red &lt; 50% | thick border: recommended setpoint</div>`;
   }
+
   if (r2.some(x => x < .3)) t += `⚠️ R² < 0.3: indicative prediction only.\n`;
   if (!isNaN(inp.Potentiel_HSM)) {
     const hv = pool.map(d => d.Potentiel_HSM).filter(x => !isNaN(x));
