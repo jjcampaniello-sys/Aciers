@@ -395,21 +395,19 @@ function vec(r, f, q, knots = {}) {
     }
   } else if (q === 2) {
     if (f.includes('T_recuit') && knots.T) {
-      v.push(Math.max(0, r.T_recuit - knots.T)**2, Math.max(0, r.T_recuit - knots.T)**2);
+      v.push(Math.max(0, r.T_recuit - knots.T[0])**2, Math.max(0, r.T_recuit - knots.T[1])**2);
       if (f.includes('CT')) v.push(r.T_recuit * r.CT);
       if (f.includes('V_galva')) v.push(r.T_recuit * r.V_galva);
       if (f.includes('CR')) v.push(r.T_recuit * r.CR);
       if (f.includes('C_eq')) v.push(r.T_recuit * r.C_eq);
     } else if (f.includes('CT') && knots.CT) {
-      v.push(Math.max(0, r.CT - knots.CT)**2, Math.max(0, r.CT - knots.CT)**2);
+      v.push(Math.max(0, r.CT - knots.CT[0])**2, Math.max(0, r.CT - knots.CT[1])**2);
       if (f.includes('V_rot')) v.push(r.CT * r.V_rot);
       if (f.includes('C_eq')) v.push(r.CT * r.C_eq);
     }
   }
   return v;
 }
-
-
 function invMat(M) {
   const n = M.length;
   return Array.from({length:n}, (_,j) => {
@@ -417,10 +415,9 @@ function invMat(M) {
     return solve(M, e);
   });
 }
-
 function fitModel(tr, f, q, yk, lam = 5e-2) {
   const knots = getKnots(tr, f);
-  const X = tr.map(r => vec(r, f, q, knots)), p = X.length, n = X.length;
+  const X = tr.map(r => vec(r, f, q, knots)), p = X[0].length, n = X.length;
   const mu = Array.from({length:p}, (_,j) => X.reduce((a,r) => a+r[j], 0)/n);
   const sd = Array.from({length:p}, (_,j) => Math.sqrt(X.reduce((a,r) => a+(r[j]-mu[j])**2, 0)/n) || 1);
   const Z = X.map(r => [1, ...r.map((v,j) => (v-mu[j])/sd[j])]);
@@ -429,10 +426,9 @@ function fitModel(tr, f, q, yk, lam = 5e-2) {
   const w = solve(A, b);
   return w ? {w, mu, sd, f, q, knots, invA: invMat(A)} : null;
 }
-
 function pred(m, row) {
   const x = vec(row, m.f, m.q, m.knots);
-  return m.w + x.reduce((a,v,j) => a + m.w[j+1]*(v-m.mu[j])/m.sd[j], 0);
+  return m.w[0] + x.reduce((a,v,j) => a + m.w[j+1]*(v-m.mu[j])/m.sd[j], 0);
 }
 
 function uncFactor(m, row) {
