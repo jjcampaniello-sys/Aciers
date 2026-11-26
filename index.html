@@ -106,6 +106,7 @@
       <div id="grp_CR"><label>Cold Reduction %CR *:</label><input type="number" id="s_CR" step="0.1" value="56.5"></div>
       <div><label>Coiling Temp CT (°C) *:</label><input type="number" id="s_CT" value="555"></div>
       <div><label>ROT Speed:</label><input type="number" id="s_Vrot" step="0.1"></div>
+            <div id="grp_T"><label>Annealing Temp (°C) (blank = optimized):</label><input type="number" id="s_T" step="1"></div>
       <div id="grp_V"><label>Annealing Line Speed (blank = optimized):</label><input type="number" id="s_V" step="1"></div>
       <div><label>C wt%:</label><input type="number" id="s_C" step="0.001"></div>
       <div><label>Mn wt%:</label><input type="number" id="s_Mn" step="0.01"></div>
@@ -118,7 +119,6 @@
       <div><label>B wt%:</label><input type="number" id="s_B" step="0.0001"></div>
       <div><label>Mother Coil Position (LENGTH_POS_MOTHER):</label><input type="number" id="s_Pos" step="1"></div>
       <div><label>Hot Rolling Temp (TEMP_START_F7):</label><input type="number" id="s_TF7" step="1"></div>
-            <div><label>RTF / SF Temp (°C):</label><input type="number" id="s_RTF" step="1"></div>
     </div>
     <button id="simBtn" onclick="simulate()" style="background:#16a34a">Calculate Setpoint</button>
     <div id="simOut" class="box" style="margin-top:15px;display:none"></div>
@@ -135,8 +135,7 @@ const FIELDS = [
   {id:'V_rot',label:'ROT Speed'},{id:'Nb',label:'Nb (wt%)'},{id:'Ti',label:'Ti (wt%)'},{id:'N',label:'N (wt%)'},
   {id:'C',label:'C (wt%)'},{id:'Mn',label:'Mn (wt%)'},{id:'Dir',label:'Test Direction'},{id:'CoilID',label:'Coil ID (ideally unique per coil)'},
     {id:'Si',label:'Si (wt%)'},{id:'Cr',label:'Cr (wt%)'},{id:'Mo',label:'Mo (wt%)'},{id:'B',label:'B (wt%)'},
-    {id:'Pos',label:'Mother Coil Position (LENGTH_POS_MOTHER)'},{id:'TF7',label:'Hot Rolling Temp (TEMP_START_F7)'},
-  {id:'RTF',label:'RTF / SF Temp (°C)'}
+    {id:'Pos',label:'Mother Coil Position (LENGTH_POS_MOTHER)'},{id:'TF7',label:'Hot Rolling Temp (TEMP_START_F7)'}
 ];
 
 const ST = {OK:'Compliant', DOUX:'Soft Reject', DUR:'Hard Reject', DUCT:'Ductility Reject', MULT:'Multiple Reject'};
@@ -154,6 +153,7 @@ function toggleRoute() {
   $('grp_V').classList.toggle('hidden', isHSM);
   $('simTitle').innerText = isHSM ? '5. Simulator: Hot-Rolled Properties Prediction' : '5. Simulator: Optimal Annealing Setpoint';
   $('simBtn').innerText = isHSM ? 'Predict Properties (Rp, Rm, A)' : 'Calculate Setpoint';
+    $('grp_T').classList.toggle('hidden', isHSM);
   if (wb) parseSheet();
 }
 
@@ -358,6 +358,7 @@ function fillFromCoil() {
   set('s_C', d.C); set('s_Mn', d.Mn); set('s_Nb', d.Nb); set('s_Ti', d.Ti); set('s_N', d.N); set('s_Pos', d.Pos); set('s_TF7', d.TF7);
   set('s_Si', d.Si); set('s_Cr', d.Cr); set('s_Mo', d.Mo); set('s_B', d.B);
   set('s_RTF', d.RTF);
+    set('s_T', ''); set('s_V', '');
 }
 
 // --- Multivariate Ridge Calibration + Joint Conformity Simulation ---
@@ -454,7 +455,7 @@ function simulate() {
   if (!data.length) { out.innerText = 'Please run the analysis first.'; return; }
   const isHSM = C.route === 'HSM';
   const v = id => parseFloat($(id).value);
-  const inp = {Th:v('s_Th'), CR:v('s_CR'), CT:v('s_CT'), V_rot:v('s_Vrot'), V_galva:v('s_V'), C:v('s_C'), Mn:v('s_Mn'), Si:v('s_Si'), Cr:v('s_Cr'), Mo:v('s_Mo'), B:v('s_B'), Nb:v('s_Nb'), Ti:v('s_Ti'), N:v('s_N'), Pos:v('s_Pos'), TF7:v('s_TF7'), RTF:v('s_RTF')};
+    const inp = {Th:v('s_Th'), CR:v('s_CR'), CT:v('s_CT'), V_rot:v('s_Vrot'), T_recuit:v('s_T'), V_galva:v('s_V'), C:v('s_C'), Mn:v('s_Mn'), Si:v('s_Si'), Cr:v('s_Cr'), Mo:v('s_Mo'), B:v('s_B'), Nb:v('s_Nb'), Ti:v('s_Ti'), N:v('s_N'), Pos:v('s_Pos'), TF7:v('s_TF7')};
   if (isNaN(inp.Th) || isNaN(inp.CT) || (!isHSM && isNaN(inp.CR))) {
     out.innerText = isHSM ? 'Please enter Th and CT.' : 'Please enter Th, %CR and CT.'; return;
   }
@@ -519,7 +520,9 @@ function simulate() {
     });
     $('simTab').innerHTML = h + `</tr></table><div style="font-size:.78em;color:#64748b;margin-top:4px">Green ≥ 80% | Yellow 50–80% | Red &lt; 50% | thick border: entered CT</div>`;
   } else {
-    const tv = tr.map(d => d.T_recuit), tMin = Math.floor(quant(tv, .05)), tMax = Math.ceil(quant(tv, .95));
+      const tv = tr.map(d => d.T_recuit), tHistMin = Math.floor(quant(tv, .05)), tHistMax = Math.ceil(quant(tv, .95));
+    const tFixed = !isNaN(inp.T_recuit);
+    const tMin = tFixed ? inp.T_recuit : tHistMin, tMax = tFixed ? inp.T_recuit : tHistMax;
     const useV = f.includes('V_galva'), vFixed = useV && !isNaN(inp.V_galva);
     let vGrid = [NaN], vMin = NaN, vMax = NaN;
     if (vFixed) vGrid = [inp.V_galva];
@@ -534,12 +537,14 @@ function simulate() {
     const tMed = quant(plat.map(g => g.t), .5), vMed = vGrid.length > 1 ? quant(plat.map(g => g.v), .5) : NaN;
     const dist = g => Math.abs(g.t - tMed) + (vGrid.length > 1 ? Math.abs(g.v - vMed)/(vMax - vMin)*(tMax - tMin) : 0);
     const best = plat.reduce((a,b) => dist(b) < dist(a) ? b : a);
+    const ts = Array.from({length:5}, (_,i) => best.t - 4 + 2*i);
     const ok95 = grid.filter(g => g.pOk >= .95);
     const kUnc = uncFactor(ms[0], {...inp, T_recuit: best.t, V_galva: best.v});
     const sdvAdj = sdv.map(s => s * kUnc);
 
-    t += `Explored T range: ${tMin}–${tMax} °C${vGrid.length > 1 ? ` | speed range: ${vMin.toFixed(0)}–${vMax.toFixed(0)}` : ''}\n`;
-    t += `SETPOINT T_anneal = ${best.t} °C${vGrid.length > 1 ? ' | RECOMMENDED SPEED = ' + best.v.toFixed(0) : vFixed ? ' (fixed speed ' + inp.V_galva + ')' : ''}\n`;
+       t += `Explored T range: ${tHistMin}–${tHistMax} °C${vGrid.length > 1 ? ` | speed range: ${vMin.toFixed(0)}–${vMax.toFixed(0)}` : ''}\n`;
+    t += `SETPOINT T_anneal = ${best.t} °C${tFixed ? ' (fixed)' : ''}${vGrid.length > 1 ? ' | RECOMMENDED SPEED = ' + best.v.toFixed(0) : vFixed ? ' (fixed speed ' + inp.V_galva + ')' : ''}\n`;
+    if (tFixed && (inp.T_recuit < tHistMin || inp.T_recuit > tHistMax)) t += `⚠️ Fixed T_anneal (${inp.T_recuit} °C) is outside historical P5–P95 range (${tHistMin}–${tHistMax} °C) → extrapolation.\n`;
     t += `Predicted: Rp ${best.p[0].toFixed(0)} (±${sdvAdj[0].toFixed(1)}) | Rm ${best.p[1].toFixed(0)} (±${sdvAdj[1].toFixed(1)})${useA ? ` | A ${best.p[2].toFixed(1)} (±${sdvAdj[2].toFixed(1)}) %` : ''}\n`;
     t += `Uncertainty factor (distance to historical range): ×${kUnc.toFixed(2)}${kUnc > 1.25 ? ' ⚠️ EXTRAPOLATION' : ''}\n`;
     t += `Joint compliance probability: ${(best.pOk*100).toFixed(0)} %\n`;
