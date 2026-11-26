@@ -373,14 +373,41 @@ const x = Array(n).fill(0);
 for (let i = n-1; i >= 0; i--) { let s = M[i][n]; for (let c = i+1; c < n; c++) s -= M[i][c]*x[c]; x[i] = s/M[i][i]; }
 return x;
 }
-function vec(r, f, q) {
+function getKnots(tr, f) {
+  const k = {};
+  if (f.includes('T_recuit')) { const a = tr.map(d => d.T_recuit); k.T = [quant(a, .33), quant(a, .67)]; }
+  if (f.includes('CT')) { const a = tr.map(d => d.CT); k.CT = [quant(a, .33), quant(a, .67)]; }
+  return k;
+}
+
+function vec(r, f, q, knots = {}) {
   const v = f.map(c => r[c]);
-  if (q) {
-    if (f.includes('T_recuit')) { v.push(r.T_recuit**2); if (f.includes('CT')) v.push(r.T_recuit*r.CT); }
-    else if (f.includes('CT')) { v.push(r.CT**2); if (f.includes('V_rot')) v.push(r.CT*r.V_rot); }
+  if (q === 1) {
+    if (f.includes('T_recuit')) {
+      v.push(r.T_recuit**2);
+      if (f.includes('CT')) v.push(r.T_recuit * r.CT);
+      if (f.includes('V_galva')) v.push(r.T_recuit * r.V_galva);
+      if (f.includes('CR')) v.push(r.T_recuit * r.CR);
+    } else if (f.includes('CT')) {
+      v.push(r.CT**2);
+      if (f.includes('V_rot')) v.push(r.CT * r.V_rot);
+    }
+  } else if (q === 2) {
+    if (f.includes('T_recuit') && knots.T) {
+      v.push(Math.max(0, r.T_recuit - knots.T)**2, Math.max(0, r.T_recuit - knots.T)**2);
+      if (f.includes('CT')) v.push(r.T_recuit * r.CT);
+      if (f.includes('V_galva')) v.push(r.T_recuit * r.V_galva);
+      if (f.includes('CR')) v.push(r.T_recuit * r.CR);
+      if (f.includes('C_eq')) v.push(r.T_recuit * r.C_eq);
+    } else if (f.includes('CT') && knots.CT) {
+      v.push(Math.max(0, r.CT - knots.CT)**2, Math.max(0, r.CT - knots.CT)**2);
+      if (f.includes('V_rot')) v.push(r.CT * r.V_rot);
+      if (f.includes('C_eq')) v.push(r.CT * r.C_eq);
+    }
   }
   return v;
 }
+
 
 function invMat(M) {
   const n = M.length;
@@ -390,29 +417,32 @@ function invMat(M) {
   });
 }
 
-function fitModel(tr, f, q, yk, lam = 1e-2) {
-  const X = tr.map(r => vec(r, f, q)), p = X[0].length, n = X.length;
+function fitModel(tr, f, q, yk, lam = 5e-2) {
+  const knots = getKnots(tr, f);
+  const X = tr.map(r => vec(r, f, q, knots)), p = X.length, n = X.length;
   const mu = Array.from({length:p}, (_,j) => X.reduce((a,r) => a+r[j], 0)/n);
   const sd = Array.from({length:p}, (_,j) => Math.sqrt(X.reduce((a,r) => a+(r[j]-mu[j])**2, 0)/n) || 1);
   const Z = X.map(r => [1, ...r.map((v,j) => (v-mu[j])/sd[j])]);
   const A = Array.from({length:p+1}, (_,i) => Array.from({length:p+1}, (_,j) => Z.reduce((a,r) => a+r[i]*r[j], 0) + (i===j && i>0 ? lam : 0)));
   const b = Array.from({length:p+1}, (_,i) => Z.reduce((a,r,k) => a+r[i]*tr[k][yk], 0));
   const w = solve(A, b);
-  return w ? {w, mu, sd, f, q, invA: invMat(A)} : null;
+  return w ? {w, mu, sd, f, q, knots, invA: invMat(A)} : null;
 }
 
 function pred(m, row) {
-  const x = vec(row, m.f, m.q);
-  return m.w[0] + x.reduce((a,v,j) => a + m.w[j+1]*(v-m.mu[j])/m.sd[j], 0);
+  const x = vec(row, m.f, m.q, m.knots);
+  return m.w + x.reduce((a,v,j) => a + m.w[j+1]*(v-m.mu[j])/m.sd[j], 0);
 }
+
 function uncFactor(m, row) {
   if (!m || !m.invA) return 1;
-  const x = vec(row, m.f, m.q);
+  const x = vec(row, m.f, m.q, m.knots);
   const z = [1, ...x.map((v,j) => (v - m.mu[j]) / m.sd[j])];
   let lev = 0;
   for (let i = 0; i < z.length; i++) for (let j = 0; j < z.length; j++) lev += z[i] * m.invA[j][i] * z[j];
   return Math.sqrt(1 + Math.max(0, lev));
 }
+
 
 function cvRes(tr, f, q, ys) {
   const g = tr.map((r,i) => r.CoilID || 'i'+i), u = [...new Set(g)], K = Math.min(5, u.length);
@@ -481,9 +511,14 @@ function simulate() {
   if (tr.length < 30) { out.innerText = 'Insufficient data (< 30 complete tests).'; return; }
   const ys = useA ? ['Rp','Rm','A'] : ['Rp','Rm'];
 
-  const R0 = cvRes(tr, f, false, ys), R1 = cvRes(tr, f, true, ys);
-  if (!R0 || !R1) { out.innerText = 'Calibration failed (collinearity).'; return; }
-  const q = cvScore(R1, tr, ys) < cvScore(R0, tr, ys) - 0.01, R = q ? R1 : R0;
+   const cands = [0, 1, 2].map(q => ({q, R: cvRes(tr, f, q, ys)})).filter(c => c.R);
+  if (!cands.length) { out.innerText = 'Calibration failed (collinearity).'; return; }
+  cands.forEach(c => c.sc = cvScore(c.R, tr, ys));
+  let bestC = cands[0];
+  for (let i = 1; i < cands.length; i++) if (cands[i].sc < bestC.sc - 0.015) bestC = cands[i];
+  const q = bestC.q, R = bestC.R;
+  const modName = q === 2 ? 'piecewise spline + interactions' : q === 1 ? 'quadratic + interactions' : 'linear';
+
   const ms = ys.map(y => fitModel(tr, f, q, y));
   const sdv = ys.map((_,t) => Math.sqrt(R.reduce((a,r) => a+r[t]**2, 0)/R.length));
   const r2 = ys.map((y,t) => { const m = tr.reduce((a,r) => a+r[y], 0)/tr.length; return 1 - R.reduce((a,r) => a+r[t]**2, 0)/tr.reduce((a,r) => a+(r[y]-m)**2, 0); });
@@ -499,7 +534,7 @@ function simulate() {
   };
   const predAll = row => ms.map(m => pred(m, row));
 
-  let t = note + `Route: ${isHSM ? 'Hot Rolling only' : 'Annealing / Galva'} | Grade: ${C.grade} | Regime ${reg} | dir. ${C.dir} | ${tr.length} tests | ${q ? 'quadratic' : 'linear'} model\n`;
+  let t = note + `Route: ${isHSM ? 'Hot Rolling only' : 'Annealing / Galva'} | Grade: ${C.grade} | Regime ${reg} | dir. ${C.dir} | ${tr.length} tests | ${modName} model\n`;
   t += `Features: ${f.join(', ')}\n`;
   t += `Out-of-sample R² (coil-grouped CV): ` + ys.map((y,i) => `${y} ${r2[i].toFixed(2)} (±${sdv[i].toFixed(1)})`).join(' | ') + ` | Rp-Rm residual corr. ${corr.toFixed(2)}\n${'-'.repeat(60)}\n`;
 
