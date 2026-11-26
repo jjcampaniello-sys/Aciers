@@ -1,59 +1,86 @@
-# Optimisation des Fenêtres Procédés & Pilotage Galva (Aciers HSLA)
+# Metallurgical Process Window Optimization & Line Control
 
-Application web autonome (PWA) d'analyse métallurgique et d'aide au réglage pour les lignes de galvanisation continue (grade cible type **CR460LA-GI**). 
+Standalone web application (PWA) for metallurgical data analysis, process window discovery, and feed-forward line setup across **Hot Rolling Mills (HSM)** and **Continuous Annealing / Galvanizing Lines (CAL / CGL)**.
 
-Elle permet d'analyser l'historique de production (laminage à chaud, laminage à froid, chimie de coulée et recuit continu) afin de **réduire le taux de rejet mécanique sous 5 %** selon trois critères :
-* **Limite d'élasticité :** $R_p \ge 460\,\text{MPa}$
-* **Résistance à la traction :** $R_m \le 680\,\text{MPa}$
-* **Allongement à la rupture :** $A\% > 15\,\%$ *(uniquement en sens longitudinal `L`)*
-
----
-
-## 🔒 Confidentialité et Architecture Technique
-* **100 % Local & Confidentiel :** L'application fonctionne exclusivement dans le navigateur web (HTML5 / JavaScript). Aucune donnée industrielle (`.xlsm`, `.xlsx`, `.csv`) n'est envoyée ni stockée sur GitHub ou sur un serveur externe.
-* **Zéro installation :** Accessible depuis n'importe quel navigateur moderne (PC ou mobile) et installable en tant que Progressive Web App (PWA) avec support hors-ligne.
+It analyzes historical production data (hot rolling, cold rolling, cast chemistry, and continuous annealing) to **minimize mechanical rejection rates** against user-defined target specifications:
+* **Yield Strength ($R_p$ / YS):** $R_p \ge R_{p,\min}$ (e.g., $460\,\text{MPa}$)
+* **Ultimate Tensile Strength ($R_m$ / UTS):** $R_m \le R_{m,\max}$ (e.g., $680\,\text{MPa}$)
+* **Elongation ($A\%$):** $A\% > A_{\min}$ *(automatically evaluated whenever elongation data is mapped)*
 
 ---
 
-## ⚙️ Fonctionnalités Principales
+## 🧠 Why Physics-Informed Statistical Models Instead of a Neural Network?
 
-1. **Importation multi-format & Mapping dynamique :**
-   * Lecture directe des classeurs Excel avec macros (`.xlsm`), `.xlsx` et `.csv`.
-   * Sélection de l'onglet, de la ligne d'en-têtes et association libre des colonnes (mémorisée automatiquement dans le navigateur).
-   * Filtrage dynamique par direction d'essai (`BEPROEV_RICHTING` : `L`, `S`, `D`, ou `TOUS`) pour éviter les biais liés à l'anisotropie mécanique.
+Unlike black-box **Neural Networks (Deep Learning)**—which typically require thousands of training coils, hide decision logic, and can extrapolate unpredictably outside historical operating boundaries—this application combines **metallurgical domain equations**, **interpretable CART decision trees**, and **regularized piecewise-spline Ridge regression with Monte-Carlo risk simulation**:
 
-2. **Indices Métallurgiques & Stratification par Régimes :**
-   * Calcul automatique du **Niobium effectif libre** ($\text{Nb}_{\text{eff}}$), du **Carbone équivalent** ($C_{\text{eq}}$) et du **Potentiel HSM** ($\frac{V_{\text{rot}}}{\text{CT} - 400}$).
-   * Segmentation automatique des bobines en **3 régimes de recristallisation** :
-     * **Régime A (Fortes épaisseurs $\ge 1,4\,\text{mm}$ ou $\%\text{CR} < 58\%$) :** Recristallisation lente, sensibilité au grossissement des précipités de Nb.
-     * **Régime B (Transition) :** Épaisseurs intermédiaires ($1,0\text{--}1,4\,\text{mm}$).
-     * **Régime C (Fines épaisseurs $\le 1,0\,\text{mm}$ ou $\%\text{CR} > 63\%$) :** Recristallisation rapide, sensibilité à la trempe intercritique.
-
-3. **Extraction de Règles (Arbre de Décision CART) & Cartographie 2D :**
-   * Identification automatique des seuils critiques de procédé ($T_{\text{recuit}}$, $\text{CT}$, vitesse de ligne, $V_{\text{rot}}$, $\%\text{CR}$) sur 3 niveaux.
-   * Visualisation interactive des fenêtres conformes et des modes de défaillance (`Rejet Doux` $R_p < 460\,\text{MPa}$, `Rejet Dur` $R_m > 680\,\text{MPa}$, `Rejet Ductilité` $A \le 15\,\%$ en sens `L`, et `Rejet Multiple`).
-   * Repérage visuel direct de la bobine sélectionnée dans le simulateur sur le nuage de points 2D.
-
-4. **Simulateur Dynamique Feed-Forward (Consigne Galva) :**
-   * Calibration automatique par régression multiple (Ridge-OLS) avec **validation croisée (5-fold CV)** sur l'historique du régime concerné.
-   * Sélection en un clic par **Code Bobine (`ROL_IDENT`)** ou saisie manuelle.
-   * Recommandation du couple optimal **(Température de recuit + Vitesse de ligne)** centré sur le plateau de conformité maximale, accompagnée d'une **grille de sensibilité** ($R_p$, $R_m$, $A\%$ prévus et probabilité de conformité) et d'alertes métallurgiques sur le Potentiel HSM.
+| Criterion | This Application (CART + Spline-Ridge + Monte-Carlo) | Neural Networks (MLP / Deep Learning) |
+| :--- | :--- | :--- |
+| **Required Dataset Size** | **Small to medium (30–1,000+ coils)** per grade thanks to L2 regularization and built-in metallurgical indices ($\text{Nb}_{\text{eff}}$, $C_{\text{eq}}$). | **Large (typically > 2,000–5,000 coils)**; prone to overfitting noise on typical grade-specific industrial datasets. |
+| **Process Interpretability** | **Full transparency:** extracts explicit shop-floor rules (e.g., `T_recuit ≤ 780.5 °C AND CR > 64.15%`). | **Black box:** requires post-hoc explainability layers (SHAP/LIME) to justify setpoints to metallurgists and operators. |
+| **Non-Linearity Handling** | **Piecewise splines (P33/P67 knots) + process/chemistry interactions** capture recrystallization plateaus and transformation slopes without polynomial divergence. | Captures high-order interactions well on massive datasets, but can oscillate wildly between sparse data points. |
+| **Extrapolation Safety** | **Quantified leverage ($\times k$):** automatically widens $\pm$ uncertainty bands and lowers compliance confidence when inputs leave the historical cloud. | Often produces overconfident predictions far outside the training domain. |
+| **Deployment & Privacy** | **100% browser-based (single HTML file, zero backend)**, runs in milliseconds offline. | Usually requires Python servers (PyTorch/TensorFlow) or heavy ONNX runtime pipelines. |
 
 ---
 
-## 🚀 Guide d'Utilisation Rapide
-
-1. **Charger les données :** Importer le fichier d'export qualité/procédé (`.xlsm`, `.xlsx` ou `.csv`), choisir l'onglet et indiquer le numéro de la ligne des titres (ex. ligne `4`).
-2. **Associer les colonnes :** Relier les 6 paramètres obligatoires (`Rp`, `Rm`, `Épaisseur`, `%CR`, `CT`, `T_recuit`) ainsi que les colonnes optionnelles (`Allongement A%`, vitesses `Galva` et `ROT`, chimie `Nb/Ti/N/C/Mn`, direction et code bobine `ROL_IDENT`).
-3. **Filtrer la direction :** Sélectionner la direction de référence de la norme (ex. `L` - Longitudinal, qui active automatiquement le contrôle $A\% > 15$).
-4. **Analyser et Simuler :**
-   * Consulter l'arbre CART et les graphiques 2D par régime pour identifier les fenêtres sûres.
-   * Utiliser la **Section 5 (Simulateur)** avant le passage d'une bobine sur ligne de galvanisation pour obtenir sa consigne de recuit et sa vitesse optimales.
+## 🔒 Privacy & Technical Architecture
+* **100% Local & Confidential:** Runs entirely inside your web browser (HTML5 / JavaScript). No industrial data (`.xlsm`, `.xlsx`, `.xls`, `.csv`) is ever uploaded, transmitted, or stored on GitHub or any external server.
+* **Zero Installation:** Works directly in any modern desktop or mobile browser and can be installed as a Progressive Web App (PWA) with offline support.
 
 ---
 
-## 📁 Structure du Dépôt
-* `index.html` : Code complet de l'application (interface, décodeur Excel, moteur statistique CART/Ridge-OLS et graphiques Plotly).
-* `manifest.json` : Fichier de configuration permettant l'installation sur bureau ou smartphone (PWA).
-* `sw.js` : Service Worker assurant la mise en cache et le fonctionnement hors-ligne (optionnel).
-* `README.md` : Documentation technique et guide utilisateur.
+## ⚙️ Key Features
+
+### 1. Multi-Route & Multi-Grade Support
+* **Selectable Process Route:**
+  * **Hot Rolling + Annealing / Galva:** Full process analysis from hot-band through cold reduction (`%CR`) and continuous annealing (`T_anneal`, line speed).
+  * **Hot Rolling Only (Stop at Coiling `CT`):** Automatically makes cold-rolling and annealing columns optional and switches the simulator to direct hot-rolled property prediction and `CT` sensitivity analysis.
+* **Selectable Steel Family:**
+  * **HSLA (Microalloyed Nb/Ti):** Evaluates effective free Niobium ($\text{Nb}_{\text{eff}}$), IIW Carbon Equivalent ($C_{\text{eq}}$), and precipitation hardening potential.
+  * **C-Mn / Mild Steel:** Evaluates ferrite grain refinement vs. coarsening driven by ROT cooling and coiling temperature (`CT`).
+  * **DP / AHSS (Multiphase):** Supports extended hardenability chemistry (`Si`, `Cr`, `Mo`, `B`), computes an extended hardenability $C_{\text{eq}}$, and estimates **Andrews critical temperatures ($Ac_1$ and $Ac_3$)** to benchmark the intercritical annealing window.
+
+### 2. Multi-Format Import & Dynamic Column Mapping
+* Direct client-side parsing of macro-enabled Excel workbooks (`.xlsm`), `.xlsx`, `.xls`, and `.csv` files.
+* Interactive selection of worksheet, header row number, and column mapping (automatically saved in `localStorage`).
+* Fixed test direction filtering (`L`, `S`, `D`) to prevent mechanical anisotropy bias.
+
+### 3. Metallurgical Indices & Thickness Stratification
+* Automatic calculation of:
+  * **Effective Free Niobium:** $\text{Nb}_{\text{eff}} = \text{Nb} - \max\left(0,\, 6.64 \cdot (\text{N} - 0.292 \cdot \text{Ti})\right)$
+  * **Carbon Equivalent ($C_{\text{eq}}$):** Standard IIW ($C + \text{Mn}/6$) for HSLA/C-Mn, or extended hardenability formula ($C + \frac{\text{Mn}+\text{Si}}{6} + \frac{\text{Cr}+\text{Mo}}{5} + 5\text{B}$) for DP/AHSS.
+  * **HSM Cooling Potential:** $\frac{V_{\text{rot}}}{\text{CT} - 400}$
+* Flexible gauge stratification: **Single Regime** mode (using thickness `Th` directly as a model feature) or **3-Regime Split** (`Thin`, `Medium`, `Thick`) based on user-defined thickness thresholds.
+
+### 4. Visual CART Decision Tree & 2D Operating Windows
+* **Hierarchical Branch Tree & Rules Table:** Gini-impurity CART splitting displaying both the visual ASCII branch hierarchy and a ranked summary table of terminal leaves (`Compliant`, `Soft Reject`, `Hard Reject`, `Ductility Reject`, `Multiple Reject`).
+* **Interactive 2D Scatter Plots (Plotly):** Explore any pair of process or chemistry variables colored by compliance status with detailed coil tooltips.
+
+### 5. Feed-Forward Simulator with Splines & Distance-Based Uncertainty
+* **Coil-Grouped 5-Fold Cross-Validation:** Automatically selects the best model complexity (`linear`, `quadratic + interactions`, or `piecewise spline + interactions`) based on out-of-sample cross-validation error grouped by `CoilID`.
+* **Flexible Optimization & What-If Simulation:**
+  * Load any historical coil by `CoilID` in one click or enter parameters manually.
+  * Leave `Annealing Temp` and/or `Line Speed` blank to let the optimizer find the safest operating plateau, or enter fixed values to simulate specific line settings.
+  * In **Hot Rolling Only** mode, predicts $R_p$, $R_m$, $A\%$ at the entered `CT` and displays a sensitivity table across $\text{CT} \pm 20\,^\circ\text{C}$.
+* **Joint Compliance Probability & Leverage Uncertainty ($\times k$):**
+  * Uses correlated Cholesky + Monte-Carlo draws (2,500 samples) to compute the **joint probability** of meeting $R_p$, $R_m$, and $A\%$ simultaneously.
+  * Computes a **leverage-based uncertainty multiplier ($\times k$)** from the statistical distance to the historical training cloud, automatically widening predicted $\pm$ intervals and lowering compliance confidence when extrapolating outside historical ranges.
+
+---
+
+## 🚀 Quick Start Guide
+1. **Load Data:** Upload a quality/process export file (`.xlsm`, `.xlsx`, `.xls`, or `.csv`), select the target sheet, and specify the header row index.
+2. **Select Route, Grade & Criteria:** Choose the **Process route** (`Hot Rolling + Annealing / Galva` or `Hot Rolling only`), **Steel family** (`HSLA`, `C-Mn`, or `DP / AHSS`), test direction, and mechanical specification limits ($R_{p,\min}$, $R_{m,\max}$, $A_{\min}$).
+3. **Map Columns:** Map the required columns (marked with `*` dynamically according to the selected route) and optional chemistry/process variables (`V_rot`, `Nb`, `Ti`, `N`, `C`, `Mn`, `Si`, `Cr`, `Mo`, `B`, `CoilID`, `LENGTH_POS_MOTHER`, `TEMP_START_F7`), then click **Run Analysis**.
+4. **Analyze & Simulate:**
+   * Review rejection KPIs, the visual **CART branch tree**, and 2D scatter windows in Sections 3 & 4.
+   * Use **Section 5 (Simulator)** to predict properties or determine optimal annealing setpoints and sensitivity grids for upcoming coils.
+
+---
+
+## 📁 Repository Structure
+* `index.html`: Complete standalone application (UI, Excel parser, CART / Piecewise-Spline Ridge / Monte-Carlo engine, and Plotly visualizations).
+* `manifest.json`: Progressive Web App (PWA) manifest for desktop/mobile installation.
+* `sw.js`: Service Worker for offline caching (optional).
+* `.github/workflows/check-html.yml`: Automated GitHub Actions syntax check for inline JavaScript on push/PR (optional).
+* `README.md`: Technical documentation and user guide.
