@@ -249,7 +249,7 @@ function render() {
       return `<tr><td><b>${r}</b></td><td>${n}</td><td>${ok}</td><td>${sub.filter(d=>d.Statut===ST.DOUX).length}</td><td>${sub.filter(d=>d.Statut===ST.DUR).length}</td><td>${sub.filter(d=>d.Statut===ST.DUCT).length}</td><td>${sub.filter(d=>d.Statut===ST.MULT).length}</td><td><b>${(100*(n-ok)/n).toFixed(1)}%</b></td></tr>`;
     }).join('') + `</table>`;
 
-     const nc = (C.route === 'HSM'
+       const nc = (C.route === 'HSM'
     ? ['CT','V_rot','Potentiel_HSM','Th','Nb_eff','C_eq','Pos','TF7','A']
     : ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','Pos','TF7','A']
   ).filter(k => data.some(d => !isNaN(d[k])));
@@ -269,6 +269,7 @@ function updateRegime() {
   const cand = C.route === 'HSM'
     ? ['CT','V_rot','Potentiel_HSM','Th','Nb_eff','C_eq','TF7']
     : ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','TF7'];
+
   const feats = cand.filter(k => rows.filter(d => !isNaN(d[k])).length >= 0.8 * rows.length);
   curLeaves = [];
   const tree = (rows.length >= C.leaf && feats.length) ? buildTree(rows, feats, 0, []) : null;
@@ -354,12 +355,12 @@ function fillFromCoil() {
   const idx = $('coilSel').value; if (idx === '') return;
   const d = data[+idx];
   const set = (id, v) => $(id).value = isNaN(v) ? '' : v;
-  set('s_Th', d.Th); set('s_CR', d.CR); set('s_CT', d.CT); set('s_Vrot', d.V_rot); set('s_V', '');
+  set('s_Th', d.Th); set('s_CR', d.CR); set('s_CT', d.CT); set('s_Vrot', d.V_rot);
   set('s_C', d.C); set('s_Mn', d.Mn); set('s_Nb', d.Nb); set('s_Ti', d.Ti); set('s_N', d.N); set('s_Pos', d.Pos); set('s_TF7', d.TF7);
   set('s_Si', d.Si); set('s_Cr', d.Cr); set('s_Mo', d.Mo); set('s_B', d.B);
-  set('s_RTF', d.RTF);
-    set('s_T', ''); set('s_V', '');
+  set('s_T', ''); set('s_V', '');
 }
+
 
 // --- Multivariate Ridge Calibration + Joint Conformity Simulation ---
 function solve(A, b) {
@@ -500,9 +501,10 @@ function simulate() {
   if (pool.length < 40) { pool = data; note = `⚠️ Regime ${reg}: < 40 tests, calibrated across all thicknesses.\n`; }
   const cov = c => pool.filter(d => !isNaN(d[c])).length / pool.length;
 
-  const candFeats = isHSM
-    ? ['CT','V_rot','Th','Nb_eff','C_eq','Pos','TF7','RTF']
-    : ['T_recuit','V_galva','CT','V_rot','CR','Th','Nb_eff','C_eq','Pos','TF7','RTF'];
+    const candFeats = isHSM
+    ? ['CT','V_rot','Th','Nb_eff','C_eq','Pos','TF7']
+    : ['T_recuit','V_galva','CT','V_rot','CR','Th','Nb_eff','C_eq','Pos','TF7'];
+
   const f = candFeats.filter(c => (!isHSM && (c === 'T_recuit' || c === 'V_galva')) ? cov(c) >= .8 : !isNaN(inp[c]) && cov(c) >= .8);
 
   let tr = pool.filter(d => f.every(c => !isNaN(d[c])));
@@ -584,7 +586,7 @@ function simulate() {
     t += `Joint compliance probability: ${(best.pOk*100).toFixed(0)} %\n`;
     if (ok95.length) t += `T range at ≥ 95%: ${Math.min(...ok95.map(g => g.t))}–${Math.max(...ok95.map(g => g.t))} °C\n`;
     else t += `⚠️ No setpoint reaches 95% compliance: coil at risk.\n`;
-    if (best.t === tMin || best.t === tMax || (vGrid.length > 1 && (best.v === vMin || best.v === vMax))) t += `⚠️ Optimum at historical boundary: validate on line.\n`;
+       if (best.t <= tHistMin || best.t >= tHistMax || (vGrid.length > 1 && (best.v === vMin || best.v === vMax))) t += `⚠️ Optimum at historical boundary: validate on line.\n`;
 
     const ts = Array.from({length:5}, (_,i) => best.t - 4 + 2*i);
     const sp = vGrid.length > 1 ? [...new Set([Math.round(vMin), Math.round(best.v), Math.round(vMax)])].sort((a,b) => a-b) : [vGrid[0]];
