@@ -6,6 +6,7 @@
 <title>Metallurgical Analysis & Process Window</title>
 <script src="https://jsdelivr.net"></script>
 <script src="https://plot.ly"></script>
+
 <style>
   body { font-family: system-ui, -apple-system, sans-serif; background:#f8fafc; color:#0f172a; margin:0; padding:20px; }
   .wrap { max-width:1280px; margin:0 auto; }
@@ -488,36 +489,38 @@ function simulate() {
       h += '</tr>';
     });
 
-$('simTab').innerHTML = h + </table><div style="font-size:.78em;color:#64748b;margin-top:4px">Green ≥ 80% | Yellow 50–80% | Red &lt; 50% | thick border: recommended setpoint</div>;
+    $('simTab').innerHTML = h + `</table><div style="font-size:.78em;color:#64748b;margin-top:4px">Green ≥ 80% | Yellow 50–80% | Red &lt; 50% | thick border: recommended setpoint</div>`;
+  }
+  if (r2.some(x => x < .3)) t += `⚠️ R² < 0.3: indicative prediction only.\n`;
+  if (!isNaN(inp.Potentiel_HSM)) {
+    const hv = pool.map(d => d.Potentiel_HSM).filter(x => !isNaN(x));
+    if (hv.length >= 20) {
+      const lo = isNaN(C.hlo) ? quant(hv, .2) : C.hlo, hi = isNaN(C.hhi) ? quant(hv, .8) : C.hhi;
+      const pct = Math.round(hv.filter(x => x <= inp.Potentiel_HSM).length / hv.length * 100);
+      t += `ℹ️ HSM Potential = ${inp.Potentiel_HSM.toFixed(3)} (percentile ${pct} of regime ${reg}; thresholds ${lo.toFixed(2)} / ${hi.toFixed(2)}${isNaN(C.hlo) && isNaN(C.hhi) ? ' auto' : ''}): `;
+      if (C.grade === 'HSLA') {
+        if (inp.Potentiel_HSM >= hi) t += `high → strong Nb precipitation hardening expected; watch for high Rm at low T_anneal or high speed.\n`;
+        else if (inp.Potentiel_HSM <= lo) t += `low → advanced precipitation during coiling, higher risk of low Rp; favor lower T_anneal / higher speed within window.\n`;
+        else t += `intermediate.\n`;
+      } else if (C.grade === 'CMN') {
+        if (inp.Potentiel_HSM >= hi) t += `high → fast ROT cooling / low CT: ferrite grain refinement (higher Rp).\n`;
+        else if (inp.Potentiel_HSM <= lo) t += `low → high CT / slow cooling: ferrite grain coarsening (lower Rp).\n`;
+        else t += `intermediate.\n`;
+      } else {
+        if (inp.Potentiel_HSM >= hi) t += `high → higher bainitic/martensitic fraction upon coiling.\n`;
+        else if (inp.Potentiel_HSM <= lo) t += `low → more ferritic microstructure upon coiling.\n`;
+        else t += `intermediate.\n`;
+      }
+    } else t += `ℹ️ HSM Potential = ${inp.Potentiel_HSM.toFixed(3)} (insufficient historical data to benchmark).\n`;
+  }
+  const outside = (isHSM ? ['Th','CT','V_rot','Nb_eff','C_eq'] : ['Th','CR','CT','V_rot','Nb_eff','C_eq']).filter(c => !isNaN(inp[c])).filter(c => {
+    const a = pool.map(d => d[c]).filter(x => !isNaN(x)); return a.length > 20 && (inp[c] < quant(a, .025) || inp[c] > quant(a, .975));
+  });
+  if (outside.length) t += `⚠️ Outside historical range (2.5–97.5%): ${outside.join(', ')} → extrapolation.\n`;
+  t += `ℹ️ Model also reflects past operator practices (correlation, not causality): validate on line.\n`;
+  out.innerText = t;
 }
-if (r2.some(x => x < .3)) t += ⚠️ R² < 0.3: indicative prediction only.\n;
-if (!isNaN(inp.Potentiel_HSM)) {
-const hv = pool.map(d => d.Potentiel_HSM).filter(x => !isNaN(x));
-if (hv.length >= 20) {
-const lo = isNaN(C.hlo) ? quant(hv, .2) : C.hlo, hi = isNaN(C.hhi) ? quant(hv, .8) : C.hhi;
-const pct = Math.round(hv.filter(x => x <= inp.Potentiel_HSM).length / hv.length * 100);
-t += ℹ️ HSM Potential = ${inp.Potentiel_HSM.toFixed(3)} (percentile ${pct} of regime ${reg}; thresholds ${lo.toFixed(2)} / ${hi.toFixed(2)}${isNaN(C.hlo) && isNaN(C.hhi) ? ' auto' : ''}): ;
-if (C.grade === 'HSLA') {
-if (inp.Potentiel_HSM >= hi) t += high → strong Nb precipitation hardening expected; watch for high Rm at low T_anneal or high speed.\n;
-else if (inp.Potentiel_HSM <= lo) t += low → advanced precipitation during coiling, higher risk of low Rp; favor lower T_anneal / higher speed within window.\n;
-else t += intermediate.\n;
-} else if (C.grade === 'CMN') {
-if (inp.Potentiel_HSM >= hi) t += high → fast ROT cooling / low CT: ferrite grain refinement (higher Rp).\n;
-else if (inp.Potentiel_HSM <= lo) t += low → high CT / slow cooling: ferrite grain coarsening (lower Rp).\n;
-else t += intermediate.\n;
-} else {
-if (inp.Potentiel_HSM >= hi) t += high → higher bainitic/martensitic fraction upon coiling.\n;
-else if (inp.Potentiel_HSM <= lo) t += low → more ferritic microstructure upon coiling.\n;
-else t += intermediate.\n;
-}
-} else t += ℹ️ HSM Potential = ${inp.Potentiel_HSM.toFixed(3)} (insufficient historical data to benchmark).\n;
-}
-const outside = (isHSM ? ['Th','CT','V_rot','Nb_eff','C_eq'] : ['Th','CR','CT','V_rot','Nb_eff','C_eq']).filter(c => !isNaN(inp[c])).filter(c => {
-const a = pool.map(d => d[c]).filter(x => !isNaN(x)); return a.length > 20 && (inp[c] < quant(a, .025) || inp[c] > quant(a, .975));
-});
-if (outside.length) t += ⚠️ Outside historical range (2.5–97.5%): ${outside.join(', ')} → extrapolation.\n;
-t += ℹ️ Model also reflects past operator practices (correlation, not causality): validate on line.\n;
-out.innerText = t;
+
 }
 toggleRoute();
 </script>
