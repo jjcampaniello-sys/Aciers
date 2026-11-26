@@ -24,7 +24,7 @@ td,th{padding:6px;border:1px solid #cbd5e1}
 </head>
 <body>
 <div class="container">
-<h1>Analyse métallurgique &amp; réglage recuit (HSLA)</h1>
+<h1>Analyse métallurgique &amp; fenêtre procédé</h1>
 
 <div class="card">
   <h3>1. Fichier et critères</h3>
@@ -35,6 +35,19 @@ td,th{padding:6px;border:1px solid #cbd5e1}
     <div><button onclick="parseSheet()">Charger les colonnes</button></div>
   </div>
   <div class="grid" style="margin-top:12px">
+    <div><label>Stade d'analyse (route) :</label>
+  <select id="c_route" onchange="toggleRoute()">
+    <option value="GALVA">Laminage à chaud + Recuit / Galva</option>
+    <option value="HSM">Laminage à chaud seul (arrêt bobinage CT)</option>
+  </select>
+</div>
+<div><label>Famille d'acier :</label>
+  <select id="c_grade">
+    <option value="HSLA">HSLA (Microallié Nb/Ti)</option>
+    <option value="CMN">C-Mn / Acier doux</option>
+    <option value="AHSS">DP / AHSS (Multiphasé)</option>
+  </select>
+</div>
     <div><label>Direction d'essai (fixée pour toute l'analyse) :</label>
       <select id="c_dir"><option value="L">L (longitudinal)</option><option value="S">S (transverse)</option><option value="D">D (diagonal)</option></select></div>
     <div><label>Rp min (MPa) :</label><input type="number" id="c_rp" value="460"></div>
@@ -74,11 +87,15 @@ td,th{padding:6px;border:1px solid #cbd5e1}
   </div>
 
   <div class="card" style="border-left:5px solid #16a34a">
-    <h3>5. Simulateur : consigne de recuit optimale</h3>
+   <h3 id="simTitle">5. Simulateur : consigne de recuit optimale</h3>
     <p style="font-size:13.5px;color:#475569">Modèle calibré sur le régime d'épaisseur de la bobine saisie, avec la direction choisie.</p>
     <label><strong>Charger une bobine du fichier :</strong></label>
     <select id="coilSel" onchange="fillFromCoil()" style="max-width:300px"><option value="">-- Saisie manuelle --</option></select>
     <div class="grid" style="margin-top:10px">
+      <div id="grp_CR"><label>Réduction %CR * :</label><input type="number" id="s_CR" step="0.1" value="56.5"></div>
+<div><label>Bobinage CT (°C) * :</label><input type="number" id="s_CT" value="555"></div>
+<div><label>Vitesse ROT :</label><input type="number" id="s_Vrot" step="0.1"></div>
+<div id="grp_V"><label>Vitesse ligne recuit (vide = optimisée) :</label><input type="number" id="s_V" step="1"></div>
       <div><label>Épaisseur Th (mm) * :</label><input type="number" id="s_Th" step="0.01" value="1.55"></div>
       <div><label>Réduction %CR * :</label><input type="number" id="s_CR" step="0.1" value="56.5"></div>
       <div><label>Bobinage CT (°C) * :</label><input type="number" id="s_CT" value="555"></div>
@@ -105,17 +122,31 @@ const esc = s => String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(
 let wb = null, raw = [], all = [], data = [], tracked = null, C = {};
 
 const FIELDS = [
-  {id:'Rp',label:'Rp (MPa) *',req:1},{id:'Rm',label:'Rm (MPa) *',req:1},{id:'A',label:'Allongement A (%)'},
-  {id:'Th',label:'Épaisseur finale (mm) *',req:1},{id:'CR',label:'%CR *',req:1},{id:'CT',label:'Bobinage CT (°C) *',req:1},
-  {id:'T_recuit',label:'T recuit galva (°C) *',req:1},{id:'V_galva',label:'Vitesse ligne recuit *',req:1},
-    {id:'V_rot',label:'Vitesse ROT'},{id:'Nb',label:'Nb (wt%)'},{id:'Ti',label:'Ti (wt%)'},{id:'N',label:'N (wt%)'},
+  {id:'Rp',label:'Rp (MPa)',req:1},{id:'Rm',label:'Rm (MPa)',req:1},{id:'A',label:'Allongement A (%)'},
+  {id:'Th',label:'Épaisseur finale (mm)',req:1},{id:'CR',label:'%CR',req:1},{id:'CT',label:'Bobinage CT (°C)',req:1},
+  {id:'T_recuit',label:'T recuit galva (°C)',req:1},{id:'V_galva',label:'Vitesse ligne recuit',req:1},
+  {id:'V_rot',label:'Vitesse ROT'},{id:'Nb',label:'Nb (wt%)'},{id:'Ti',label:'Ti (wt%)'},{id:'N',label:'N (wt%)'},
   {id:'C',label:'C (wt%)'},{id:'Mn',label:'Mn (wt%)'},{id:'Dir',label:'Direction essai'},{id:'CoilID',label:'Code bobine (idéalement unique par bobine)'},
   {id:'Pos',label:'Position sur coil mère (LENGTH_POS_MOTHER)'},{id:'TF7',label:'Temp. laminage à chaud (TEMP_START_F7)'}
 ];
+
 const ST = {OK:'Conforme',DOUX:'Rejet Doux',DUR:'Rejet Dur',DUCT:'Rejet Ductilité',MULT:'Rejet Multiple'};
 const STL = Object.values(ST);
 const COL = {'Conforme':'#16a34a','Rejet Doux':'#2563eb','Rejet Dur':'#dc2626','Rejet Ductilité':'#d97706','Rejet Multiple':'#9333ea'};
 const REGS = ['Faible','Moyenne','Épaisse','Tous'];
+  function toggleRoute() {
+  const isHSM = $('c_route').value === 'HSM';
+  ['CR', 'T_recuit', 'V_galva'].forEach(id => {
+    const f = FIELDS.find(x => x.id === id);
+    if (f) f.req = isHSM ? 0 : 1;
+  });
+  $('grp_CR').classList.toggle('hidden', isHSM);
+  $('grp_V').classList.toggle('hidden', isHSM);
+  $('simTitle').innerText = isHSM ? '5. Simulateur : prédiction propriétés laminage à chaud' : '5. Simulateur : consigne de recuit optimale';
+  $('simBtn').innerText = isHSM ? 'Prédire les propriétés (Rp, Rm, A)' : 'Calculer la consigne';
+  if (wb) parseSheet(); // Met à jour les astérisques (*) dans le mapping
+}
+
 const regime = th => C.single ? 'Tous' : th <= C.lo ? 'Faible' : th >= C.hi ? 'Épaisse' : 'Moyenne';
 $('fileInput').addEventListener('change', e => {
   const file = e.target.files[0]; if (!file) return;
@@ -136,7 +167,10 @@ function parseSheet() {
   if (rows.length <= hi) return alert("Ligne d'en-tête invalide.");
   const headers = rows[hi].map((h,i) => h ? String(h).trim() : `Col_${i+1}`);
   raw = rows.slice(hi+1).map(r => { const o = {}; headers.forEach((h,i) => o[h] = r[i]); return o; });
-  $('mappingGrid').innerHTML = FIELDS.map(f => `<div><label>${f.label}</label><select id="map_${f.id}"><option value="">(Ignorer)</option>${headers.map(h => `<option value="${esc(h)}">${esc(h)}</option>`).join('')}</select></div>`).join('');
+  
+  // Ligne modifiée ci-dessous : ajout dynamique de ' *' si f.req === 1
+  $('mappingGrid').innerHTML = FIELDS.map(f => `<div><label>${f.label}${f.req ? ' *' : ''}</label><select id="map_${f.id}"><option value="">(Ignorer)</option>${headers.map(h => `<option value="${esc(h)}">${esc(h)}</option>`).join('')}</select></div>`).join('');
+  
   try {
     const sv = JSON.parse(localStorage.getItem('hsla_mapping') || '{}');
     FIELDS.forEach(f => { if (sv[f.id] && headers.includes(sv[f.id])) $('map_'+f.id).value = sv[f.id]; });
@@ -144,12 +178,26 @@ function parseSheet() {
   $('mappingCard').classList.remove('hidden');
 }
 
+
 function runAnalysis() {
   for (const f of FIELDS.filter(x => x.req)) if (!$('map_'+f.id).value) return alert('Colonne obligatoire : ' + f.label);
   try { const m = {}; FIELDS.forEach(f => m[f.id] = $('map_'+f.id).value); localStorage.setItem('hsla_mapping', JSON.stringify(m)); } catch(e) {}
-  C = {rp:+$('c_rp').value, rm:+$('c_rm').value, a:+$('c_a').value, lo:+$('c_lo').value, hi:+$('c_hi').value,
-       dir:$('c_dir').value, leaf:Math.max(5,+$('c_leaf').value||15), depth:+$('c_depth').value||3,
-       hlo:parseFloat($('c_hlo').value), hhi:parseFloat($('c_hhi').value), single:$('c_single').checked};
+  
+  C = {
+    rp: +$('c_rp').value, rm: +$('c_rm').value, a: +$('c_a').value, 
+    lo: +$('c_lo').value, hi: +$('c_hi').value, dir: $('c_dir').value, 
+    leaf: Math.max(5, +$('c_leaf').value || 15), depth: +$('c_depth').value || 3,
+    hlo: parseFloat($('c_hlo').value), hhi: parseFloat($('c_hhi').value), 
+    single: $('c_single').checked,
+    route: $('c_route').value, // 'GALVA' ou 'HSM'
+    grade: $('c_grade').value  // 'HSLA', 'CMN' ou 'AHSS'
+  };
+
+  // Liste dynamique des colonnes obligatoires selon la route choisie
+  const reqIds = C.route === 'HSM' 
+    ? ['Rp', 'Rm', 'Th', 'CT'] 
+    : ['Rp', 'Rm', 'Th', 'CR', 'CT', 'T_recuit', 'V_galva'];
+
   const dirMapped = !!$('map_Dir').value;
   all = [];
   raw.forEach(row => {
@@ -160,22 +208,30 @@ function runAnalysis() {
       else if (f.id === 'CoilID') it.CoilID = col ? String(row[col]).trim() : '';
       else it[f.id] = col ? parseFloat(String(row[col]).replace(',', '.')) : NaN;
     });
-    if ([it.Rp,it.Rm,it.Th,it.CR,it.CT,it.T_recuit,it.V_galva].some(isNaN)) return;
+
+    // Vérification dynamique : ne rejette plus les lignes sans recuit en mode HSM
+    if (reqIds.some(id => isNaN(it[id]))) return;
     if (dirMapped && it.Dir !== C.dir) return;
+
     const doux = it.Rp < C.rp, dur = it.Rm > C.rm, duct = !isNaN(it.A) && it.A <= C.a;
     const n = doux + dur + duct;
     it.Statut = n > 1 ? ST.MULT : doux ? ST.DOUX : dur ? ST.DUR : duct ? ST.DUCT : ST.OK;
+
+    // Indicateurs métallurgiques (calculés uniquement si les colonnes sont mappées)
     if (![it.Nb,it.N,it.Ti].some(isNaN)) it.Nb_eff = it.Nb - Math.max(0, 6.64 * (it.N - 0.292 * it.Ti));
     if (![it.C,it.Mn].some(isNaN)) it.C_eq = it.C + it.Mn / 6;
     if (!isNaN(it.V_rot) && it.CT > 400) it.Potentiel_HSM = it.V_rot / (it.CT - 400);
+
     it.Regime = regime(it.Th);
     all.push(it);
   });
+
   data = all;
   C.hasA = data.some(d => !isNaN(d.A));
-  if (!data.length) return alert("Aucune ligne exploitable pour cette direction.");
+  if (!data.length) return alert("Aucune ligne exploitable pour cette direction et cette route.");
   render();
 }
+
 
 function render() {
   const n = data.length, cnt = s => data.filter(d => d.Statut === s).length, pc = s => (cnt(s)/n*100).toFixed(1) + ' %';
@@ -200,7 +256,11 @@ const sub = () => { const r = $('regimeFilter').value; return r === 'Tous' ? dat
 
 function updateRegime() {
   const rows = sub();
-  const feats = ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','TF7'].filter(k => rows.filter(d => !isNaN(d[k])).length >= 0.8 * rows.length);
+  const baseFeats = $('c_route').value === 'HSM' 
+  ? ['CT','V_rot','Potentiel_HSM','Th','Nb_eff','C_eq','TF7']
+  : ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','TF7'];
+const feats = baseFeats.filter(k => rows.filter(d => !isNaN(d[k])).length >= 0.8 * rows.length);
+
   const cc = rows.filter(d => feats.every(k => !isNaN(d[k])));
   $('treeRules').innerText = `Variables : ${feats.join(', ')} | ${cc.length}/${rows.length} bobines complètes utilisées\n` +
     (cc.length < 2 * C.leaf ? formatLeaf(cc.length ? cc : rows) : cart(cc, feats, 0));
@@ -262,8 +322,15 @@ function solve(A, b) {
   const x = Array(p).fill(0);
   for (let i = p-1; i >= 0; i--) { x[i] = M[i][p]; for (let j = i+1; j < p; j++) x[i] -= M[i][j]*x[j]; x[i] /= M[i][i]; }
   return x;
+}function vec(r, f, q) {
+  const v = f.map(c => r[c]);
+  if (q) {
+    if (f.includes('T_recuit')) { v.push(r.T_recuit**2); if (f.includes('CT')) v.push(r.T_recuit*r.CT); }
+    else if (f.includes('CT')) { v.push(r.CT**2); if (f.includes('V_rot')) v.push(r.CT*r.V_rot); }
+  }
+  return v;
 }
-function vec(r, f, q) { const v = f.map(c => r[c]); if (q) { v.push(r.T_recuit**2); if (f.includes('CT')) v.push(r.T_recuit*r.CT); } return v; }
+
 
 function fitModel(rows, f, q, y, lam = 1) {
   const X = rows.map(r => vec(r, f, q)), p = X[0].length, n = X.length;
