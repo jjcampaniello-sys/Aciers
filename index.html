@@ -249,9 +249,9 @@ function render() {
       return `<tr><td><b>${r}</b></td><td>${n}</td><td>${ok}</td><td>${sub.filter(d=>d.Statut===ST.DOUX).length}</td><td>${sub.filter(d=>d.Statut===ST.DUR).length}</td><td>${sub.filter(d=>d.Statut===ST.DUCT).length}</td><td>${sub.filter(d=>d.Statut===ST.MULT).length}</td><td><b>${(100*(n-ok)/n).toFixed(1)}%</b></td></tr>`;
     }).join('') + `</table>`;
 
-   const nc = (C.route === 'HSM'
-    ? ['CT','V_rot','Potentiel_HSM','Th','Nb_eff','C_eq','Pos','TF7','RTF','A']
-    : ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','Pos','TF7','RTF','A']
+     const nc = (C.route === 'HSM'
+    ? ['CT','V_rot','Potentiel_HSM','Th','Nb_eff','C_eq','Pos','TF7','A']
+    : ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','Pos','TF7','A']
   ).filter(k => data.some(d => !isNaN(d[k])));
   ['xSel','ySel'].forEach((id, idx) => { $(id).innerHTML = nc.map(k => `<option>${k}</option>`).join(''); $(id).selectedIndex = Math.min(idx, nc.length-1); });
 
@@ -267,8 +267,8 @@ function selectReg(r, btn) { curReg = r; document.querySelectorAll('.tab').forEa
 function updateRegime() {
   const rows = curReg === 'All' ? data : data.filter(d => d.Regime === curReg);
   const cand = C.route === 'HSM'
-    ? ['CT','V_rot','Potentiel_HSM','Th','Nb_eff','C_eq','TF7','RTF']
-    : ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','TF7','RTF'];
+    ? ['CT','V_rot','Potentiel_HSM','Th','Nb_eff','C_eq','TF7']
+    : ['T_recuit','V_galva','CT','V_rot','Potentiel_HSM','CR','Th','Nb_eff','C_eq','TF7'];
   const feats = cand.filter(k => rows.filter(d => !isNaN(d[k])).length >= 0.8 * rows.length);
   curLeaves = [];
   const tree = (rows.length >= C.leaf && feats.length) ? buildTree(rows, feats, 0, []) : null;
