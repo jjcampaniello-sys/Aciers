@@ -537,7 +537,6 @@ function simulate() {
     const tMed = quant(plat.map(g => g.t), .5), vMed = vGrid.length > 1 ? quant(plat.map(g => g.v), .5) : NaN;
     const dist = g => Math.abs(g.t - tMed) + (vGrid.length > 1 ? Math.abs(g.v - vMed)/(vMax - vMin)*(tMax - tMin) : 0);
     const best = plat.reduce((a,b) => dist(b) < dist(a) ? b : a);
-    const ts = Array.from({length:5}, (_,i) => best.t - 4 + 2*i);
     const ok95 = grid.filter(g => g.pOk >= .95);
     const kUnc = uncFactor(ms[0], {...inp, T_recuit: best.t, V_galva: best.v});
     const sdvAdj = sdv.map(s => s * kUnc);
@@ -552,7 +551,7 @@ function simulate() {
     else t += `⚠️ No setpoint reaches 95% compliance: coil at risk.\n`;
     if (best.t === tMin || best.t === tMax || (vGrid.length > 1 && (best.v === vMin || best.v === vMax))) t += `⚠️ Optimum at historical boundary: validate on line.\n`;
 
-    const ts = Array.from({length:5}, (_,i) => Math.max(tMin, Math.min(tMax-8, best.t-4)) + 2*i).filter(x => x <= tMax);
+    const ts = Array.from({length:5}, (_,i) => best.t - 4 + 2*i);
     const sp = vGrid.length > 1 ? [...new Set([Math.round(vMin), Math.round(best.v), Math.round(vMax)])].sort((a,b) => a-b) : [vGrid[0]];
     let h = `<b>Sensitivity Grid</b><table><tr style="background:#f1f5f9"><th>Speed \\ T</th>${ts.map(x => `<th>${x} °C</th>`).join('')}</tr>`;
     sp.forEach(vg => {
